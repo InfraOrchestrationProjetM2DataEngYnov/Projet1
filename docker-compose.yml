@@ -95,5 +95,34 @@ services:
     networks:
       - kafka-net
 
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: namenode
+    environment:
+      - CLUSTER_NAME=test
+    ports:
+      - "9870:9870"    # WebUI NN
+      - "9000:9000"    # RPC (si besoin)
+    volumes:
+      - namenode:/hadoop/dfs/name
+    networks:
+      - kafka-net
+
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode
+    environment:
+      - SERVICE_PRECONDITION=namenode:9870
+    ports:
+      - "9864:9864"    # WebUI DN
+    volumes:
+      - datanode:/hadoop/dfs/data
+    depends_on:
+      - namenode
+    networks:
+      - kafka-net
+
 volumes:
   pgdata:
+  namenode:
+  datanode:
