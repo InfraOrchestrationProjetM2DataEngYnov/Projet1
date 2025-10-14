@@ -28,10 +28,14 @@ services:
       KAFKA_LOG_RETENTION_HOURS: 168
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       CLUSTER_ID: "Mk3OEYBSD34fcwNTJENDM2Qk"
-    volumes:
-      - ./data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     networks:
       - kafka-net
+
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
@@ -50,7 +54,8 @@ services:
     build: ./producer
     container_name: weather-producer
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     environment:
       BOOTSTRAP_SERVERS: kafka:9092
       TOPIC_NAME: weather-api
@@ -58,6 +63,7 @@ services:
       CITY: "Paris"
     networks:
       - kafka-net
+
 
   postgres:
     image: postgres:16

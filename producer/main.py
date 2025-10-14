@@ -1,5 +1,6 @@
-from kafka import KafkaProducer
 import requests, json, os, time
+time.sleep(10)  # Wait for Kafka to be ready
+from kafka import KafkaProducer
 
 producer = KafkaProducer(
     bootstrap_servers=[os.getenv("BOOTSTRAP_SERVERS", "kafka:9092")],
