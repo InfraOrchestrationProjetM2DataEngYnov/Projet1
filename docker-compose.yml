@@ -61,6 +61,24 @@ services:
     networks:
       - kafka-net
 
+  weather-consumer:
+    build: ./consumer
+    container_name: weather-consumer
+    depends_on:
+      - kafka
+      - postgres
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      TOPIC_NAME: weather-api
+      GROUP_ID: weather-consumer-group
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_DB: weatherdb
+      PG_USER: user
+      PG_PASSWORD: password
+    networks:
+      - kafka-net
+
   postgres:
     image: postgres:16
     container_name: postgres
