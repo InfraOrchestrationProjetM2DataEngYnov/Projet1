@@ -28,19 +28,17 @@ def create_table(conn):
     with conn.cursor() as cur:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS weather (
-                city TEXT,
-                temp REAL,
-                description TEXT,
-                dt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
+                DATE Timestamp,
+                Value JSONB,
+                )
         """)
         conn.commit()
 
-def insert_weather(conn, city, temp, description):
+def insert_weather(conn, Date, Value):
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO weather (city, temp, description) VALUES (%s, %s, %s)",
-            (city, temp, description)
+            "INSERT INTO weather (DATE, Value) VALUES (%s,%s)",
+            (Date, Value)
         )
         conn.commit()
 
