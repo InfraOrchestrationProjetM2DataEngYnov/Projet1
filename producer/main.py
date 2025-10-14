@@ -24,3 +24,12 @@ while True:
     except Exception as e:
         print("Error:", e)
     time.sleep(600)  # every 10 min
+
+
+# Recup le temps
+def get_weather(city):
+    """Récupère la météo pour une ville via OpenWeatherMap"""
+    url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={API_KEY}&units=metric"
+    response = requests.get(url)
+    response.raise_for_status()
+    return response.json()
