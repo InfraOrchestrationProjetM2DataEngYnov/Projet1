@@ -70,10 +70,17 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
       BOOTSTRAP_SERVERS: kafka:9092
       TOPIC_NAME: weather-api
       GROUP_ID: weather-consumer-group
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_DB: weatherdb
+      PG_USER: user
+      PG_PASSWORD: password
     networks:
       - kafka-net
 
@@ -90,6 +97,12 @@ services:
       - pgdata:/var/lib/postgresql/data
     networks:
       - kafka-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 
 volumes:
   pgdata:
