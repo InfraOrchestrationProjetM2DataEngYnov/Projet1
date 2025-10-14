@@ -1,5 +1,5 @@
 import requests, json, os, time
-time.sleep(10)  # Wait for Kafka to be ready
+time.sleep(30)  # Wait for Kafka to be ready
 from kafka import KafkaProducer
 
 producer = KafkaProducer(
@@ -19,18 +19,10 @@ while True:
         if resp.status_code == 200:
             data = resp.json()
             producer.send(TOPIC, data)
+            producer.flush()
             print(f"Sent weather data for {CITY}")
         else:
             print(f"Error {resp.status_code} fetching weather data")
     except Exception as e:
         print("Error:", e)
     time.sleep(600)  # every 10 min
-
-
-# Recup le temps
-def get_weather(city):
-    """Récupère la météo pour une ville via OpenWeatherMap"""
-    url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={API_KEY}&units=metric"
-    response = requests.get(url)
-    response.raise_for_status()
-    return response.json()

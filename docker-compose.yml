@@ -17,11 +17,11 @@ services:
       KAFKA_PROCESS_ROLES: controller,broker
       KAFKA_NODE_ID: 1
       KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_LISTENERS: PLAINTEXT://kafka:9092,CONTROLLER://kafka:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_LOG_DIRS: /var/lib/kafka/data
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
@@ -29,10 +29,11 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       CLUSTER_ID: "Mk3OEYBSD34fcwNTJENDM2Qk"
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9092"]
+      test: ["CMD-SHELL", "echo > /dev/tcp/localhost/9092 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 20s
     networks:
       - kafka-net
 
@@ -54,13 +55,9 @@ services:
     build: ./producer
     container_name: weather-producer
     depends_on:
-      kafka:
-        condition: service_healthy
-    environment:
-      BOOTSTRAP_SERVERS: kafka:9092
-      TOPIC_NAME: weather-api
-      OPENWEATHER_API_KEY: "your_openweather_api_key"
-      CITY: "Paris"
+      - kafka
+    env_file:
+      - .env
     networks:
       - kafka-net
 
