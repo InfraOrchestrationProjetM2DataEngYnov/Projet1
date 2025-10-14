@@ -1,8 +1,9 @@
-version: '3.8'
+version: "3.8"
 
 networks:
-  kafka-net:
-    driver: bridge
+  default:
+    external:
+      name: infra-net
 
 services:
   kafka:
@@ -35,21 +36,34 @@ services:
       retries: 10
       start_period: 20s
     networks:
-      - kafka-net
-
+      - infra-net
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-cluster-ui
     ports:
-      - "8080:8080"
+      - "8085:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
     depends_on:
       - kafka
     networks:
-      - kafka-net
+      - infra-net
+
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: weatherdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - infra-net
 
   weather-producer:
     build: ./producer
@@ -59,7 +73,7 @@ services:
     env_file:
       - .env
     networks:
-      - kafka-net
+      - infra-net
 
   weather-consumer:
     build: ./consumer
@@ -77,52 +91,8 @@ services:
       PG_USER: user
       PG_PASSWORD: password
     networks:
-      - kafka-net
-
-  postgres:
-    image: postgres:16
-    container_name: postgres
-    environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: weatherdb
-    ports:
-      - "5432:5432"
-    depends_on:
-      - kafka
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    networks:
-      - kafka-net
-
-  namenode:
-    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
-    container_name: namenode
-    environment:
-      - CLUSTER_NAME=test
-    ports:
-      - "9870:9870"    # WebUI NN
-      - "9000:9000"    # RPC (si besoin)
-    volumes:
-      - namenode:/hadoop/dfs/name
-    networks:
-      - kafka-net
-
-  datanode:
-    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
-    container_name: datanode
-    environment:
-      - SERVICE_PRECONDITION=namenode:9870
-    ports:
-      - "9864:9864"    # WebUI DN
-    volumes:
-      - datanode:/hadoop/dfs/data
-    depends_on:
-      - namenode
-    networks:
-      - kafka-net
+      - infra-net
 
 volumes:
   pgdata:
-  namenode:
-  datanode:
+

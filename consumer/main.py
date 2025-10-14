@@ -6,7 +6,7 @@ import pytz
 import psycopg2
 time.sleep(30)
 from kafka import KafkaConsumer
-from hdfs import InsecureClien
+from hdfs import InsecureClient
 
 BOOTSTRAP_SERVERS = os.getenv("BOOTSTRAP_SERVERS", "kafka:9092")
 TOPIC = os.getenv("TOPIC_NAME", "weather-api")
