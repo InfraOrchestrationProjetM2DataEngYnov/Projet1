@@ -1,0 +1,6 @@
+- name: Deploy full data stack
+  hosts: local
+  become: yes
+  roles:
+    - kafka
+    - hadoop

@@ -1,0 +1,27 @@
+- name: Ensure Docker and Compose are installed
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-compose
+    state: present
+    update_cache: true
+
+- name: Create project directory
+  file:
+    path: /opt/weather-project
+    state: directory
+
+- name: Copy docker-compose
+  copy:
+    src: files/docker-compose.yml
+    dest: /opt/weather-project/docker-compose.yml
+
+- name: Generate .env from template
+  template:
+    src: templates/.env.j2
+    dest: /opt/weather-project/.env
+
+- name: Run stack
+  community.docker.docker_compose:
+    project_src: /opt/weather-project
+    state: present
