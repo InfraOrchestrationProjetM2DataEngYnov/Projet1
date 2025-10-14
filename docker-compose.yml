@@ -61,7 +61,6 @@ services:
     networks:
       - kafka-net
 
-
   postgres:
     image: postgres:16
     container_name: postgres
@@ -71,6 +70,8 @@ services:
       POSTGRES_DB: weatherdb
     ports:
       - "5432:5432"
+    depends_on:
+      - kafka
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
