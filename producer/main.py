@@ -5,7 +5,7 @@ import requests, json, os, time
 from datetime import datetime, timezone, timedelta
 
 producer = KafkaProducer(
-    bootstrap_servers=[os.getenv("BOOTSTRAP_SERVERS", "kafka:9092")],
+    bootstrap_servers=[os.getenv("BOOTSTRAP_SERVERS")],
     value_serializer=lambda v: json.dumps(v).encode("utf-8")
 )
 

@@ -7,16 +7,16 @@ import psycopg2
 time.sleep(30)
 from kafka import KafkaConsumer
 
-BOOTSTRAP_SERVERS = os.getenv("BOOTSTRAP_SERVERS", "kafka:9092")
-TOPIC = os.getenv("TOPIC_NAME", "weather-api")
-GROUP_ID = os.getenv("GROUP_ID", "weather-consumer-group")
+BOOTSTRAP_SERVERS = os.getenv("BOOTSTRAP_SERVERS")
+TOPIC = os.getenv("TOPIC_NAME")
+GROUP_ID = os.getenv("GROUP_ID")
 
 # Config PostgreSQL
-PG_HOST = os.getenv("PG_HOST", "postgres")
-PG_PORT = os.getenv("PG_PORT", "5432")
-PG_DB = os.getenv("PG_DB", "weatherdb")
-PG_USER = os.getenv("PG_USER", "user")
-PG_PASSWORD = os.getenv("PG_PASSWORD", "password")
+PG_HOST = os.getenv("PG_HOST")
+PG_PORT = os.getenv("PG_PORT")
+PG_DB = os.getenv("PG_DB")
+PG_USER = os.getenv("PG_USER")
+PG_PASSWORD = os.getenv("PG_PASSWORD")
 
 def connect_pg():
     return psycopg2.connect(
