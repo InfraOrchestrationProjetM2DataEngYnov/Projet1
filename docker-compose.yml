@@ -64,6 +64,18 @@ services:
     networks:
       - kafka-net
 
+  weather-consumer:
+    build: ./consumer
+    container_name: weather-consumer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      TOPIC_NAME: weather-api
+      GROUP_ID: weather-consumer-group
+    networks:
+      - kafka-net
 
   postgres:
     image: postgres:16
