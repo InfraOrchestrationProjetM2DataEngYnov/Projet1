@@ -2,6 +2,7 @@ import os
 import json
 import time
 import psycopg2
+time.sleep(30)
 from kafka import KafkaConsumer
 
 BOOTSTRAP_SERVERS = os.getenv("BOOTSTRAP_SERVERS", "kafka:9092")
@@ -28,17 +29,17 @@ def create_table(conn):
     with conn.cursor() as cur:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS weather (
-                DATE Timestamp,
-                Value JSONB,
+                    date_time TIMESTAMP,
+                    Value JSONB
                 )
         """)
         conn.commit()
 
-def insert_weather(conn, Date, Value):
+def insert_weather(conn, date_time, value):
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO weather (DATE, Value) VALUES (%s,%s)",
-            (Date, Value)
+            "INSERT INTO weather (date_time, value) VALUES (%s,%s)",
+            (date_time, json.dumps(value))
         )
         conn.commit()
 
@@ -66,11 +67,9 @@ def main():
 
     for message in consumer:
         data = message.value
-        city = data.get("name")
-        temp = data.get("main", {}).get("temp")
-        description = data.get("weather", [{}])[0].get("description")
-        print(f"🌤️ {city}: {temp}°C, {description}")
-        insert_weather(conn, city, temp, description)
+        print("🌤️ Received:", data)
+        insert_weather(conn, time.strftime('%Y-%m-%d %H:%M:%S'), data)
+
 
 if __name__ == "__main__":
     main()

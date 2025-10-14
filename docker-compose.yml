@@ -29,10 +29,11 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       CLUSTER_ID: "Mk3OEYBSD34fcwNTJENDM2Qk"
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9092"]
+      test: ["CMD-SHELL", "echo > /dev/tcp/localhost/9092 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 20s
     networks:
       - kafka-net
 
@@ -54,8 +55,7 @@ services:
     build: ./producer
     container_name: weather-producer
     depends_on:
-      kafka:
-        condition: service_healthy
+      - kafka
     environment:
       BOOTSTRAP_SERVERS: kafka:9092
       TOPIC_NAME: weather-api
@@ -68,10 +68,8 @@ services:
     build: ./consumer
     container_name: weather-consumer
     depends_on:
-      kafka:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
+      - kafka
+      - postgres
     environment:
       BOOTSTRAP_SERVERS: kafka:9092
       TOPIC_NAME: weather-api
@@ -97,12 +95,8 @@ services:
       - pgdata:/var/lib/postgresql/data
     networks:
       - kafka-net
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
+    depends_on:
+      - kafka
 
 volumes:
   pgdata:
