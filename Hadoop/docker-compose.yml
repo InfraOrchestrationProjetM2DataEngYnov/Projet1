@@ -1,38 +1,39 @@
 version: "3.8"
 
-networks:
-  default:
-    external:
-      name: infra-net
-
-
 services:
   namenode:
     image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
     container_name: namenode
     environment:
       - CLUSTER_NAME=test
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+      - HDFS_CONF_dfs_namenode_rpc_address_namenode=namenode:8020
+      - INIT_DFS_PERMISSIONS=no 
     ports:
-      - "9870:9870"    # WebUI NN
-      - "8200:8020"    # RPC (HDFS)
+      - "9870:9870"
+      - "8020:8020"
     volumes:
       - namenode:/hadoop/dfs/name
     networks:
-      - infra-net
+      - infra-kafka
 
   datanode:
     image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
     container_name: datanode
     environment:
-      - SERVICE_PRECONDITION=namenode:9870
-    ports:
-      - "9864:9864"    # WebUI DN
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+      - SERVICE_PRECONDITION=namenode:8020
     volumes:
       - datanode:/hadoop/dfs/data
     depends_on:
       - namenode
     networks:
-      - infra-net
+      - infra-kafka
+
+networks:
+  infra-kafka:
+    external: true
+
 
 volumes:
   namenode:
