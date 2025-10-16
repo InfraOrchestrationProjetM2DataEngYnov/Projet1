@@ -1,0 +1,57 @@
+---
+- name: Ensure Docker and Compose are installed
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-compose
+    state: present
+    update_cache: true
+
+- name: Create project directory
+  file:
+    path: /opt/weather-project
+    state: directory
+
+- name: Copy docker-compose file
+  copy:
+    src: files/docker-compose.yml
+    dest: /opt/weather-project/docker-compose.yml
+
+- name: Generate .env from template
+  template:
+    src: templates/.env.j2
+    dest: /opt/weather-project/.env
+
+# --- Added sections below ---
+
+- name: Copy producer folder
+  copy:
+    src: "{{ playbook_dir }}/../producer/"
+    dest: /opt/weather-project/producer
+    mode: '0755'
+
+- name: Copy consumer folder
+  copy:
+    src: "{{ playbook_dir }}/../consumer/"
+    dest: /opt/weather-project/consumer
+    mode: '0755'
+
+- name: Copy monitoring folder
+  copy:
+    src: "{{ playbook_dir }}/../monitoring/"
+    dest: /opt/weather-project/monitoring
+    mode: '0755'
+
+
+# --- End additions ---
+
+- name: Run stack with environment file manually loaded
+  community.docker.docker_compose:
+    project_src: /opt/weather-project
+    files:
+      - docker-compose.yml
+    build: true
+    restarted: true
+    state: present
+    env_file: /opt/weather-project/.env
+
