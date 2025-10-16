@@ -131,24 +131,12 @@ def main():
     # Wait configuration
     consumer = wait_for_kafka()
     conn = wait_for_postgres()
-    wait_for_hdfs(HDFS_URL)
-    hdfs_client = InsecureClient(HDFS_URL, user=HDFS_USER)
-    ensure_dir(hdfs_client, HDFS_BASE_PATH)
-
     batch = []
-    last_flush = time.time()
-    current_dir = None
-
+    
     for msg in consumer:
         data = msg.value
         ts_ms = msg.timestamp
         event_dt = datetime.fromtimestamp(ts_ms / 1000, tz=LOCAL_TZ)
-        dir_path = target_dir_for(event_dt)
-
-        # Création du dossier HDFS si nécessaire
-        if dir_path != current_dir:
-            ensure_dir(hdfs_client, dir_path)
-            current_dir = dir_path
 
         # Préparer record
         record = {
@@ -162,11 +150,6 @@ def main():
         # Insérer dans PostgreSQL
         insert_weather(conn, event_dt, msg.offset, msg.partition, data)
 
-        # Flush HDFS si taille batch ou intervalle
-        if len(batch) >= FLUSH_SIZE or (time.time() - last_flush) >= FLUSH_INTERVAL_SEC:
-            flush_batch(hdfs_client, current_dir, batch)
-            batch = []
-            last_flush = time.time()
 
 if __name__ == "__main__":
     main()

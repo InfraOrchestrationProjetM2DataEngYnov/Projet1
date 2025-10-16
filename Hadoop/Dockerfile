@@ -1,8 +1,8 @@
 FROM bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
 
-USER root
-COPY setup-hdfs.sh /setup-hdfs.sh
-RUN chmod +x /setup-hdfs.sh
+WORKDIR /app
+COPY . .
 
-# Ne pas écraser ENTRYPOINT, juste CMD
-CMD ["/setup-hdfs.sh"]
+RUN pip install kafka-python requests psycopg2-binary pytz hdfs
+CMD ["python", "pull_Hdfs.py"]
+
