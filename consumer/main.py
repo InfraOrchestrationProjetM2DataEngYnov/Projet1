@@ -9,8 +9,10 @@ from kafka import KafkaConsumer, errors
 from hdfs import InsecureClient
 
 # =====================
-# CONFIG ENV
+# CONFIGURATION ENVIRONNEMENT
 # =====================
+
+# Variables d'environnement avec valeurs par défaut
 BOOTSTRAP_SERVERS = os.getenv("BOOTSTRAP_SERVERS", "kafka:9092")
 TOPIC = os.getenv("TOPIC_NAME", "weather-api")
 GROUP_ID = os.getenv("GROUP_ID", "weather-consumer-group")
@@ -30,8 +32,10 @@ FLUSH_INTERVAL_SEC = int(os.getenv("FLUSH_INTERVAL_SEC", "60"))
 LOCAL_TZ = pytz.timezone("Europe/Paris")
 
 # =====================
-# POSTGRESQL
+# CONNEXION À POSTGRESQL
 # =====================
+
+# Connexion à la base PostgreSQL
 def connect_pg():
     return psycopg2.connect(
         host=PG_HOST,
@@ -41,6 +45,7 @@ def connect_pg():
         password=PG_PASSWORD
     )
 
+# Création de la table si elle n'existe pas
 def create_table(conn):
     with conn.cursor() as cur:
         cur.execute("""
@@ -53,6 +58,7 @@ def create_table(conn):
         """)
         conn.commit()
 
+# Insertion d'une ligne dans la table weather
 def insert_weather(conn, date_time, offset, partition, value):
     with conn.cursor() as cur:
         cur.execute(
@@ -64,13 +70,17 @@ def insert_weather(conn, date_time, offset, partition, value):
 # =====================
 # HDFS
 # =====================
+
+# Création d’un dossier dans HDFS s’il n’existe pas
 def ensure_dir(client: InsecureClient, path: str):
     if not client.status(path, strict=False):
         client.makedirs(path)
 
+# Génère le chemin HDFS cible basé sur la date
 def target_dir_for(dt: datetime) -> str:
     return f"{HDFS_BASE_PATH}/dt={dt.strftime('%Y-%m-%d')}"
 
+# Écriture d’un lot de données dans HDFS
 def flush_batch(client, dir_path, batch):
     if not batch:
         return
@@ -79,11 +89,13 @@ def flush_batch(client, dir_path, batch):
     path = f"{dir_path}/{fname}"
     payload = "\n".join(json.dumps(r, ensure_ascii=False) for r in batch) + "\n"
     client.write(path, data=payload, overwrite=False, encoding="utf-8")
-    print(f"✅ Flushed {len(batch)} records to HDFS: {path}")
+    print(f"Flushed {len(batch)} records to HDFS: {path}")
 
 # =====================
-# WAIT
+# ATTENTE DES SERVICES
 # =====================
+
+# Attente que Kafka soit disponible
 def wait_for_kafka():
     while True:
         try:
@@ -95,50 +107,54 @@ def wait_for_kafka():
                 auto_offset_reset="earliest",
                 enable_auto_commit=True
             )
-            print("✅ Connected to Kafka")
+            print("Connected to Kafka")
             return consumer
         except errors.NoBrokersAvailable:
-            print("⏳ Waiting for Kafka broker...")
+            print("Waiting for Kafka broker...")
             time.sleep(5)
 
+# Attente que PostgreSQL soit disponible
 def wait_for_postgres():
     conn = None
     while conn is None:
         try:
             conn = connect_pg()
             create_table(conn)
-            print("✅ Connected to PostgreSQL")
+            print("Connected to PostgreSQL")
         except Exception as e:
-            print("⏳ Waiting for PostgreSQL...", e)
+            print("Waiting for PostgreSQL...", e)
             time.sleep(5)
     return conn
 
+# Attente que HDFS soit disponible
 def wait_for_hdfs(url):
     while True:
         try:
             r = requests.get(f"{url}/webhdfs/v1/?op=LISTSTATUS")
             if r.status_code == 200:
-                print("✅ HDFS ready")
+                print("HDFS ready")
                 return
         except requests.exceptions.RequestException:
             pass
-        print("⏳ Waiting for HDFS...")
+        print("Waiting for HDFS...")
         time.sleep(20)
+
 # =====================
-# MAIN ================
+# MAIN
 # =====================
 def main():
-    # Wait configuration
+    # Connexion aux services
     consumer = wait_for_kafka()
     conn = wait_for_postgres()
     batch = []
     
+    # Boucle principale : lecture des messages Kafka
     for msg in consumer:
         data = msg.value
         ts_ms = msg.timestamp
         event_dt = datetime.fromtimestamp(ts_ms / 1000, tz=LOCAL_TZ)
 
-        # Préparer record
+        # Préparer un enregistrement
         record = {
             "kafka_partition": msg.partition,
             "kafka_offset": msg.offset,
@@ -147,7 +163,7 @@ def main():
         }
         batch.append(record)
 
-        # Insérer dans PostgreSQL
+        # Insertion dans PostgreSQL
         insert_weather(conn, event_dt, msg.offset, msg.partition, data)
 
 

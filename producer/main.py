@@ -1,31 +1,41 @@
 import requests, json, os, time
-time.sleep(30)  # Wait for Kafka to be ready
 from kafka import KafkaProducer
-import requests, json, os, time
 from datetime import datetime, timezone, timedelta
 
+# Attente initiale pour s'assurer que Kafka est prêt
+time.sleep(30)
+
+# =====================
+# CONFIGURATION
+# =====================
+
+# Configuration du producteur Kafka
 producer = KafkaProducer(
     bootstrap_servers=[os.getenv("BOOTSTRAP_SERVERS", "kafka:9092")],
     value_serializer=lambda v: json.dumps(v).encode("utf-8")
 )
 
-API_KEY = os.getenv("OPENWEATHER_API_KEY")
-CITY = os.getenv("CITY", "Paris")
+# Variables d'environnement
+API_KEY = os.getenv("OPENWEATHER_API_KEY")  # Clé API OpenWeatherMap
+CITY = os.getenv("CITY", "Paris")           # Ville par défaut
 TOPIC = os.getenv("TOPIC_NAME", "weather-api")
 
+# URLs des différentes API OpenWeatherMap
 BASE_URL = "http://api.openweathermap.org/data/2.5"
 GEO_URL = "http://api.openweathermap.org/geo/1.0"
 ONECALL3_URL = "https://api.openweathermap.org/data/3.0"
 HISTORY_URL = "http://history.openweathermap.org/data/2.5"
 
+# =====================
+# FONCTIONS D’APPELS API
+# =====================
 
 def get_coordinates(city):
     """
-    Récupère la latitude et la longitude d'une ville.
-    Exemple :
-        get_coordinates("Paris") 
-        get_coordinates("Paris,FR") 
-
+    Récupère la latitude et la longitude d'une ville depuis OpenWeatherMap.
+    Exemples :
+        get_coordinates("Paris")
+        get_coordinates("Paris,FR")
     """
     url = f"{GEO_URL}/direct?q={city}&limit=1&appid={API_KEY}"
     response = requests.get(url)
@@ -38,32 +48,32 @@ def get_coordinates(city):
     name = data[0].get("name", "")
     country = data[0].get("country", "")
 
-    # Si le résultat ne contient pas de pays ou si c’est un nom générique (comme “France”), on le rejette
+    # Vérifie que le pays est valide (code ISO à 2 lettres)
     if not country or len(country) != 2:
         raise ValueError(f"'{city}' ne semble pas être une ville valide. Entrez une ville précise (ex: Paris,FR).")
 
     return data[0]['lat'], data[0]['lon'], name
 
 
-
-# Recup le temps
 def get_weather(city):
-    """Récupère la météo pour une ville via OpenWeatherMap"""
-    url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={API_KEY}&units=metric"
+    """Récupère la météo actuelle pour une ville."""
+    url = f"{BASE_URL}/weather?q={city}&appid={API_KEY}&units=metric"
     response = requests.get(url)
     response.raise_for_status()
     return response.json()
 
+
 def get_forecast(city, days=5):
-    """ Récupère les prévisions météo (jusqu’à 5 jours)"""
+    """Récupère les prévisions météo jusqu’à 5 jours."""
     lat, lon, name = get_coordinates(city)
     url = f"{BASE_URL}/forecast?lat={lat}&lon={lon}&appid={API_KEY}&units=metric&lang=fr"
     response = requests.get(url)
     response.raise_for_status()
     return response.json()
 
+
 def get_air_pollution(city):
-    """Récupère la qualité de l’air pour une ville"""
+    """Récupère la qualité de l’air pour une ville donnée."""
     lat, lon, name = get_coordinates(city)
     url = f"{BASE_URL}/air_pollution?lat={lat}&lon={lon}&appid={API_KEY}"
     response = requests.get(url)
@@ -72,9 +82,12 @@ def get_air_pollution(city):
 
 
 def get_precipitations(city):
-    """Récupère les précipitations récentes (1h/3h) pluie et neige pour une ville.
-
-    Retourne un dict avec les clés: rain_1h, rain_3h, snow_1h, snow_3h (valeurs en mm).
+    """
+    Récupère les précipitations récentes (pluie et neige) pour une ville.
+    Retourne un dictionnaire avec les clés :
+        - rain_1h / rain_3h
+        - snow_1h / snow_3h
+    Les valeurs sont en millimètres.
     """
     data = get_weather(city)
     rain = data.get("rain", {}) or {}
@@ -92,9 +105,9 @@ def get_precipitations(city):
 
 
 def get_sun_info(city):
-    """Récupère les informations Soleil (lever/coucher) pour une ville.
-
-    Retourne un dict avec sunrise/sunset en UTC et heure locale (selon offset fourni par l'API).
+    """
+    Récupère les informations sur le lever et le coucher du soleil pour une ville.
+    Retourne les heures en UTC et en heure locale.
     """
     data = get_weather(city)
     tz_offset = int(data.get("timezone", 0) or 0)
@@ -121,33 +134,37 @@ def get_sun_info(city):
         "day_length_seconds": day_length_seconds,
     }
 
+# =====================
+# BOUCLE PRINCIPALE
+# =====================
+
+# Boucle infinie : envoi des données toutes les 10 minutes
 while True:
     try:
+        # Appels successifs aux différentes API
         sun_info = get_sun_info(CITY)
         precipations_info = get_precipitations(CITY)
         air_pollution = get_air_pollution(CITY)
         forecast = get_forecast(CITY)
         weather = get_weather(CITY)
+
+        # Regroupement des données dans un seul dictionnaire
         data = {
-            'sun_info':sun_info,
-            'precipitations_info':precipations_info,
-            'air_pollution':air_pollution,
-            'forecast':forecast,
-            'weather':weather
+            'sun_info': sun_info,
+            'precipitations_info': precipations_info,
+            'air_pollution': air_pollution,
+            'forecast': forecast,
+            'weather': weather
         }
-        producer.send(TOPIC,data)
+
+        # Envoi des données au topic Kafka
+        producer.send(TOPIC, data)
         producer.flush()
-        print(f"Sent data {data} for {CITY}")
-        # # resp = requests.get(
-        # #     f"https://api.openweathermap.org/data/2.5/weather?q={CITY}&appid={API_KEY}&units=metric"
-        # # )
-        # if resp.status_code == 200:
-        #     data = resp.json()
-        #     producer.send(TOPIC, data)
-        #     producer.flush()
-        #     print(f"Sent weather data for {CITY}")
-        # else:
-        #     print(f"Error {resp.status_code} fetching weather data")
+
+        print(f"Sent data for {CITY}")
+
     except Exception as e:
         print("Error:", e)
-    time.sleep(600)  # every 10 min
+
+    # Attente de 10 minutes avant la prochaine collecte
+    time.sleep(600)
