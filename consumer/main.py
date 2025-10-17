@@ -4,19 +4,18 @@ import time
 from datetime import datetime
 import pytz
 import psycopg2
-time.sleep(30)
 from kafka import KafkaConsumer
+from kafka.errors import NoBrokersAvailable
 
 BOOTSTRAP_SERVERS = os.getenv("BOOTSTRAP_SERVERS")
 TOPIC = os.getenv("TOPIC_NAME")
 GROUP_ID = os.getenv("GROUP_ID")
 
-# Config PostgreSQL
-PG_HOST = os.getenv("PG_HOST")
-PG_PORT = os.getenv("PG_PORT")
-PG_DB = os.getenv("PG_DB")
-PG_USER = os.getenv("PG_USER")
-PG_PASSWORD = os.getenv("PG_PASSWORD")
+PG_HOST = os.getenv("POSTGRES_HOST")
+PG_PORT = os.getenv("POSTGRES_PORT")
+PG_DB = os.getenv("POSTGRES_DB")
+PG_USER = os.getenv("POSTGRES_USER")
+PG_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 
 def connect_pg():
     return psycopg2.connect(
@@ -37,7 +36,6 @@ def create_table(conn):
                 value JSONB
             )
         """)
-
         conn.commit()
 
 def insert_weather(conn, date_time, offset, partition, value):
@@ -48,19 +46,26 @@ def insert_weather(conn, date_time, offset, partition, value):
         )
         conn.commit()
 
+def connect_kafka(retries=10, delay=10):
+    for i in range(retries):
+        try:
+            return KafkaConsumer(
+                TOPIC,
+                bootstrap_servers=[BOOTSTRAP_SERVERS],
+                group_id=GROUP_ID,
+                value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+                auto_offset_reset="earliest",
+                enable_auto_commit=True
+            )
+        except NoBrokersAvailable:
+            print(f"Kafka not ready, retry {i+1}/{retries}")
+            time.sleep(delay)
+    raise Exception("Kafka not reachable after retries")
 
 def main():
-    consumer = KafkaConsumer(
-        TOPIC,
-        bootstrap_servers=[BOOTSTRAP_SERVERS],
-        group_id=GROUP_ID,
-        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-        auto_offset_reset="earliest",
-        enable_auto_commit=True
-    )
+    consumer = connect_kafka()
     print(f"✅ Consumer started, listening on topic '{TOPIC}'")
 
-    # Connexion PostgreSQL
     conn = None
     while conn is None:
         try:
@@ -75,16 +80,12 @@ def main():
         data = message.value
         offset = message.offset
         partition = message.partition
-        timestamp = message.timestamp  # epoch (ms)
+        timestamp = message.timestamp
         local_tz = pytz.timezone("Europe/Paris")
-
         timestamp_str = datetime.fromtimestamp(timestamp / 1000, tz=local_tz).strftime('%Y-%m-%d %H:%M:%S')
 
         print(f"🌤️ Received message at offset {offset} (partition {partition})")
-
         insert_weather(conn, timestamp_str, offset, partition, data)
-
-
 
 if __name__ == "__main__":
     main()

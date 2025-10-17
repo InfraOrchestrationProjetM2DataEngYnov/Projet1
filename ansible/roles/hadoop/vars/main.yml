@@ -1,0 +1,14 @@
+OPENWEATHER_API_KEY: "34a09902da14d98cce424fbfc4355d75"
+BOOTSTRAP_SERVERS: "kafka:9092"
+TOPIC_NAME: "weather-api"
+CITY: "Paris"
+
+HDFS_BASE_PATH: /user/hdfs/weather
+HDFS_USER: hdfs
+HDFS_URL: http://namenode:9870/
+
+POSTGRES_HOST: postgres
+POSTGRES_PORT: 5432
+POSTGRES_DB: weatherdb
+POSTGRES_USER: user
+POSTGRES_PASSWORD: password

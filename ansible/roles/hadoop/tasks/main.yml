@@ -1,0 +1,91 @@
+---
+- name: Ensure Docker and Compose are installed
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-compose
+    state: present
+    update_cache: true
+
+- name: Create project directory
+  file:
+    path: /opt/hadoop
+    state: directory
+
+- name: Copy docker-compose file
+  copy:
+    src: files/docker-compose.yml
+    dest: /opt/hadoop/docker-compose.yml
+
+- name: Generate .env from template
+  template:
+    src: templates/.env.j2
+    dest: /opt/hadoop/.env
+
+# --- Added sections below ---
+
+- name: Copy pull_Hdfs folder
+  copy:
+    src: "{{ playbook_dir }}/../hadoop/"
+    dest: /opt/hadoop/hadoop-pull
+    mode: '0755'
+
+
+# --- End additions ---
+
+- name: Ensure external Docker network infra-kafka exists
+  community.docker.docker_network:
+    name: infra-kafka
+    state: present
+
+- name: Run stack with environment file manually loaded
+  community.docker.docker_compose:
+    project_src: /opt/hadoop
+    files:
+      - docker-compose.yml
+    build: true
+    restarted: true
+    state: present
+    env_file: /opt/hadoop/.env
+
+- name: Wait for Namenode to be ready
+  community.docker.docker_container_exec:
+    container: namenode
+    command: bash -c "hdfs dfsadmin -report"
+  register: namenode_status
+  retries: 10
+  delay: 10
+  until: namenode_status.rc == 0
+
+
+# --- HDFS initialization tasks ---
+
+- name: Create /user/hdfs/weather directory in HDFS
+  community.docker.docker_container_exec:
+    container: namenode
+    command: hdfs dfs -mkdir -p /user/hdfs/weather
+
+- name: List contents of /user/hdfs
+  community.docker.docker_container_exec:
+    container: namenode
+    command: hdfs dfs -ls /user/hdfs
+  register: hdfs_list
+
+- name: Put owner hdfs for /user/hdfs
+  community.docker.docker_container_exec:
+    container: namenode
+    command: hdfs dfs -chown -R hdfs:supergroup /user/hdfs
+  
+- name: Set-up 755 permissions for /user/hdfs
+  community.docker.docker_container_exec:
+    container: namenode
+    command: hdfs dfs -chmod -R 755 /user/hdfs
+
+- name: Set-up 755 permissions for /user/hdfs/weather
+  community.docker.docker_container_exec:
+    container: namenode
+    command: hdfs dfs -chmod -R 755 /user/hdfs/weather
+
+- name: Show HDFS directory list
+  debug:
+    var: hdfs_list.stdout
