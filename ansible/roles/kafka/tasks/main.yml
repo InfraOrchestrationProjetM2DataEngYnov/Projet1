@@ -45,6 +45,11 @@
 
 # --- End additions ---
 
+- name: Ensure external Docker network infra-kafka exists
+  community.docker.docker_network:
+    name: infra-kafka
+    state: present
+
 - name: Run stack with environment file manually loaded
   community.docker.docker_compose:
     project_src: /opt/weather-project

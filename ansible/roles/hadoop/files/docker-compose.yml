@@ -1,161 +1,54 @@
 version: "3.8"
 
-networks:
-  data-net:
-    driver: bridge
-
-volumes:
-  pgdata:
-  kafka_data:
-  grafana_data:
-
 services:
-
-  # -------------------- KAFKA STACK --------------------
-  kafka:
-    image: confluentinc/cp-kafka:latest
-    container_name: kafka
-    hostname: kafka
-    ports:
-      - "9092:9092"
-      - "9093:9093"
-    environment:
-      KAFKA_KRAFT_MODE: "true"
-      KAFKA_PROCESS_ROLES: controller,broker
-      KAFKA_NODE_ID: 1
-      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
-      KAFKA_LISTENERS: PLAINTEXT://kafka:9092,CONTROLLER://kafka:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LOG_DIRS: /var/lib/kafka/data
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_LOG_RETENTION_HOURS: 168
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      CLUSTER_ID: "Mk3OEYBSD34fcwNTJENDM2Qk"
-    volumes:
-      - kafka_data:/var/lib/kafka/data
-    networks:
-      - data-net
-    healthcheck:
-      test: ["CMD-SHELL", "echo > /dev/tcp/localhost/9092 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
-
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-    container_name: kafka-ui
-    ports:
-      - "8080:8080"
-    environment:
-      KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
-    depends_on:
-      - kafka
-    networks:
-      - data-net
-
-  # -------------------- POSTGRES --------------------
-  postgres:
-    image: postgres:16
-    container_name: postgres
-    env_file:
-      - .env
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    networks:
-      - data-net
-
-  postgres-exporter:
-    image: prometheuscommunity/postgres-exporter:latest
-    container_name: postgres-exporter
-    environment:
-      DATA_SOURCE_NAME: "postgresql://${PG_USER}:${PG_PASSWORD}@postgres:5432/${PG_DB}?sslmode=disable"
-    ports:
-      - "9187:9187"
-    depends_on:
-      - postgres
-    networks:
-      - data-net
-
-  # -------------------- PYTHON STACK --------------------
-  weather-producer:
-    build: ./producer
-    container_name: weather-producer
-    env_file:
-      - .env
-    depends_on:
-      - kafka
-    networks:
-      - data-net
-
-  weather-consumer:
-    build: ./consumer
-    container_name: weather-consumer
-    env_file:
-      - .env
-    depends_on:
-      - kafka
-      - postgres
-    networks:
-      - data-net
-
-  # -------------------- HADOOP --------------------
   namenode:
     image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
     container_name: namenode
+    env_file:
+      - .env
     environment:
-      - CLUSTER_NAME=hadoop-cluster
-    volumes:
-      - ./data/hadoop/namenode:/hadoop/dfs/name
+      - CLUSTER_NAME=test
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+      - HDFS_CONF_dfs_namenode_rpc_address_namenode=namenode:8020
+      - HDFS_CONF_dfs_webhdfs_enabled=true
+      - INIT_DFS_PERMISSIONS=no
     ports:
       - "9870:9870"
+      - "8020:8020"
+    volumes:
+      - namenode:/hadoop/dfs/name
     networks:
-      - data-net
+      - infra-kafka
 
   datanode:
     image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
     container_name: datanode
+    env_file:
+      - .env
     environment:
-      - CLUSTER_NAME=hadoop-cluster
       - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+      - SERVICE_PRECONDITION=namenode:8020
     volumes:
-      - ./data/hadoop/datanode:/hadoop/dfs/data
+      - datanode:/hadoop/dfs/data
     depends_on:
       - namenode
-    ports:
-      - "9864:9864"
     networks:
-      - data-net
+      - infra-kafka
 
-  # -------------------- MONITORING --------------------
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: prometheus
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-    ports:
-      - "9090:9090"
-    networks:
-      - data-net
-
-  grafana:
-    image: grafana/grafana:latest
-    container_name: grafana
-    ports:
-      - "3000:3000"
+  pull-hdfs:
+    build: ./hadoop-pull
+    container_name: pull-hdfs
+    env_file:
+      - .env
     depends_on:
-      - prometheus
-    environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
-    volumes:
-      - grafana_data:/var/lib/grafana
+      - namenode
     networks:
-      - data-net
+      - infra-kafka
+
+networks:
+  infra-kafka:
+    external: true
+
+volumes:
+  namenode:
+  datanode:

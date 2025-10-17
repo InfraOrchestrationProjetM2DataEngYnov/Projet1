@@ -1,8 +1,8 @@
 version: "3.8"
 
 networks:
-  data-net:
-    driver: bridge
+  infra-kafka:
+    external: true
 
 volumes:
   pgdata:
@@ -38,7 +38,7 @@ services:
     volumes:
       - kafka_data:/var/lib/kafka/data
     networks:
-      - data-net
+      - infra-kafka
     healthcheck:
       test: ["CMD-SHELL", "echo > /dev/tcp/localhost/9092 || exit 1"]
       interval: 10s
@@ -57,7 +57,7 @@ services:
     depends_on:
       - kafka
     networks:
-      - data-net
+      - infra-kafka
 
   # -------------------- POSTGRES --------------------
   postgres:
@@ -70,7 +70,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
-      - data-net
+      - infra-kafka
 
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:latest
@@ -82,7 +82,7 @@ services:
     depends_on:
       - postgres
     networks:
-      - data-net
+      - infra-kafka
 
   # -------------------- PYTHON STACK --------------------
   weather-producer:
@@ -93,7 +93,7 @@ services:
     depends_on:
       - kafka
     networks:
-      - data-net
+      - infra-kafka
 
   weather-consumer:
     build: ./consumer
@@ -104,7 +104,7 @@ services:
       - kafka
       - postgres
     networks:
-      - data-net
+      - infra-kafka
 
   # -------------------- MONITORING --------------------
   prometheus:
@@ -115,7 +115,7 @@ services:
     ports:
       - "9090:9090"
     networks:
-      - data-net
+      - infra-kafka
 
   grafana:
     image: grafana/grafana:latest
@@ -130,4 +130,5 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
     networks:
-      - data-net
+      - infra-kafka
+  

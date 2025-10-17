@@ -18,11 +18,11 @@ logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
 logger = logging.getLogger(__name__)
 
 # Variables d’environnement
-PG_HOST = os.getenv("PG_HOST", "postgres")
-PG_PORT = os.getenv("PG_PORT", "5432")
-PG_DB = os.getenv("PG_DB", "weatherdb")
-PG_USER = os.getenv("PG_USER", "user")
-PG_PASSWORD = os.getenv("PG_PASSWORD", "password")
+PG_HOST = os.getenv("POSTGRES_HOST")
+PG_PORT = os.getenv("POSTGRES_PORT")
+PG_DB = os.getenv("POSTGRES_DB")
+PG_USER = os.getenv("POSTGRES_USER")
+PG_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 
 HDFS_BASE_PATH = os.getenv("HDFS_BASE_PATH", "/user/hdfs/weather").rstrip("/")
 HDFS_USER = os.getenv("HDFS_USER", "hdfs")
