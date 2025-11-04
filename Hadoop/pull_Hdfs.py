@@ -158,6 +158,7 @@ def main():
     """Programme principal : lecture PostgreSQL → export vers HDFS."""
     logger.info("Démarrage du processus d’export des données météo vers HDFS.")
     logger.info(f"Paramètres HDFS : URL={HDFS_URL}, USER={HDFS_USER}, BASE_PATH={HDFS_BASE_PATH}")
+    
 
     # Pause initiale pour laisser les services se lancer
     initial_delay = int(os.getenv("INITIAL_DELAY_SEC", "30"))
@@ -165,18 +166,20 @@ def main():
         logger.info(f"Pause initiale de {initial_delay} secondes...")
         time.sleep(initial_delay)
 
-    # Connexion aux services
-    conn = connect_pg()
-    wait_for_hdfs(HDFS_URL)
 
-    # Initialisation du client HDFS
-    hdfs_client = InsecureClient(HDFS_URL, user=HDFS_USER)
-    today_dir = target_dir_for(datetime.now(LOCAL_TZ))
+    while True:
+        # Connexion aux services
+        conn = connect_pg()
+        wait_for_hdfs(HDFS_URL)
+        # Initialisation du client HDFS
+        hdfs_client = InsecureClient(HDFS_URL, user=HDFS_USER)
+        today_dir = target_dir_for(datetime.now(LOCAL_TZ))
 
-    # Récupération et export des données
-    rows = fetch_weather(conn)
-    export_to_hdfs(hdfs_client, today_dir, rows)
-
+        # Récupération et export des données
+        rows = fetch_weather(conn)
+        export_to_hdfs(hdfs_client, today_dir, rows)
+        conn.close()
+        time.sleep(5*60)
 
 if __name__ == "__main__":
     main()
