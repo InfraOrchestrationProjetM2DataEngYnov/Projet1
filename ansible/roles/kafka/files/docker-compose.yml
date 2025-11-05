@@ -66,7 +66,7 @@ services:
     env_file:
       - .env
     ports:
-      - "5432:5432"
+      - "55432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
@@ -121,7 +121,7 @@ services:
     image: grafana/grafana:latest
     container_name: grafana
     ports:
-      - "3000:3000"
+      - "55435:3000"
     depends_on:
       - prometheus
     environment:
