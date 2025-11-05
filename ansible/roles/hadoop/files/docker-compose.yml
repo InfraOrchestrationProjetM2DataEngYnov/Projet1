@@ -1,6 +1,7 @@
 version: "3.8"
 
 services:
+  # -------------------- HADOOP --------------------
   namenode:
     image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
     container_name: namenode
@@ -35,6 +36,76 @@ services:
     networks:
       - infra-kafka
 
+  resourcemanager:
+    image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
+    container_name: resourcemanager
+    env_file:
+      - .env
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+      - YARN_CONF_yarn_resourcemanager_hostname=resourcemanager
+      - YARN_CONF_yarn_resourcemanager_webapp_address=resourcemanager:8088
+      - YARN_CONF_yarn_log_aggregation_enable=true
+      - SERVICE_PRECONDITION=namenode:8020
+    ports:
+      - "8088:8088"
+    depends_on:
+      - namenode
+      - datanode
+    networks:
+      - infra-kafka
+
+  nodemanager:
+    image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
+    container_name: nodemanager
+    env_file:
+      - .env
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+      - YARN_CONF_yarn_resourcemanager_hostname=resourcemanager
+      - SERVICE_PRECONDITION=resourcemanager:8088 namenode:8020
+    depends_on:
+      - resourcemanager
+      - namenode
+    networks:
+      - infra-kafka
+
+  # -------------------- HIVE --------------------
+  hive-metastore:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-metastore
+    env_file:
+      - .env
+    environment:
+      - HIVE_CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+      - SERVICE_PRECONDITION=namenode:8020 datanode:50010
+    ports:
+      - "9083:9083"
+    depends_on:
+      - namenode
+      - datanode
+    networks:
+      - infra-kafka
+
+  hive-server:
+    image: bde2020/hive:2.3.2
+    container_name: hive-server
+    env_file:
+      - .env
+    environment:
+      - HIVE_CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+      - HIVE_CORE_CONF_hive_metastore_uris=thrift://hive-metastore:9083
+      - SERVICE_PRECONDITION=namenode:8020 datanode:50010 hive-metastore:9083
+    ports:
+      - "10000:10000"
+      - "10002:10002"
+    depends_on:
+      - hive-metastore
+    networks:
+      - infra-kafka
+
+
+  # -------------------- PULL HDFS --------------------
   pull-hdfs:
     build: ./hadoop-pull
     container_name: pull-hdfs
@@ -44,6 +115,19 @@ services:
       - namenode
     networks:
       - infra-kafka
+
+  # -------------------- Map Reduce --------------------
+  mapreduce:
+    build: ./MapReduce
+    container_name: mapreduce
+    env_file:
+      - .env
+    depends_on:
+      - hive-server
+      - namenode
+    networks:
+      - infra-kafka
+    restart: "no" # mettre à no pour le moment 
 
 networks:
   infra-kafka:

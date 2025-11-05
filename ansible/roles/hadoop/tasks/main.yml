@@ -30,6 +30,13 @@
     dest: /opt/hadoop/hadoop-pull
     mode: '0755'
 
+# --- Map Reduce Task ---
+
+- name: Copy MapReduce scripts
+  copy:
+    src: "{{ playbook_dir }}/roles/hadoop/files/MapReduce/"
+    dest: /opt/hadoop/MapReduce
+    mode: '0755'
 
 # --- End additions ---
 
@@ -89,3 +96,7 @@
 - name: Show HDFS directory list
   debug:
     var: hdfs_list.stdout
+
+
+
+
