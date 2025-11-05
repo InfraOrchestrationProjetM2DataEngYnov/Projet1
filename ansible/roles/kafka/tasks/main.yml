@@ -43,6 +43,17 @@
     mode: '0755'
 
 
+# optionnel mais utile pour être sûr :
+- name: Check Prometheus config exists
+  stat:
+    path: /opt/weather-project/monitoring/prometheus.yml
+  register: prometheus_conf
+
+- name: Fail if Prometheus config is missing
+  fail:
+    msg: "Prometheus config not found at /opt/weather-project/monitoring/prometheus.yml"
+  when: not prometheus_conf.stat.exists
+  
 # --- End additions ---
 
 - name: Ensure external Docker network infra-kafka exists
@@ -59,4 +70,5 @@
     restarted: true
     state: present
     env_file: /opt/weather-project/.env
-
+  environment:
+    DOCKER_API_VERSION: "1.48"
