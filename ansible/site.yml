@@ -2,5 +2,6 @@
   hosts: local
   become: yes
   roles:
-    - kafka
+    - ingestion
     - hadoop
+    - monitoring

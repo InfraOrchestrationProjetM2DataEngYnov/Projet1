@@ -26,7 +26,7 @@
 
 - name: Copy pull_Hdfs folder
   copy:
-    src: "{{ playbook_dir }}/../hadoop/"
+    src: "{{ playbook_dir }}/roles/hadoop/files/pull_hdfs/"
     dest: /opt/hadoop/hadoop-pull
     mode: '0755'
 

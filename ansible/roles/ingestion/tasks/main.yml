@@ -1,0 +1,56 @@
+---
+- name: Ensure Docker and Compose are installed
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-compose
+    state: present
+    update_cache: true
+
+- name: Create project directory
+  file:
+    path: /opt/ingestion
+    state: directory
+
+- name: Copy docker-compose file
+  copy:
+    src: files/docker-compose.yml
+    dest: /opt/ingestion/docker-compose.yml
+
+- name: Generate .env from template
+  template:
+    src: templates/.env.j2
+    dest: /opt/ingestion/.env
+
+# --- Added sections below ---
+
+- name: Copy producer folder
+  copy:
+    src: "{{ playbook_dir }}/roles/ingestion/files/producer/"
+    dest: /opt/ingestion/producer
+    mode: '0755'
+
+- name: Copy consumer folder
+  copy:
+    src: "{{ playbook_dir }}/roles/ingestion/files/consumer/"
+    dest: /opt/ingestion/consumer
+    mode: '0755'
+  
+# --- End additions ---
+
+- name: Ensure external Docker network infra-kafka exists
+  community.docker.docker_network:
+    name: infra-kafka
+    state: present
+
+- name: Run stack with environment file manually loaded
+  community.docker.docker_compose:
+    project_src: /opt/ingestion
+    files:
+      - docker-compose.yml
+    build: true
+    restarted: true
+    state: present
+    env_file: /opt/ingestion/.env
+  environment:
+    DOCKER_API_VERSION: "1.48"

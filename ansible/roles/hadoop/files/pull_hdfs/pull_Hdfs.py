@@ -55,23 +55,42 @@ def connect_pg():
         raise
 
 
-def fetch_weather(conn):
-    """Récupère toutes les lignes de la table 'weather' triées par offset Kafka."""
-    sql = """
-        SELECT date_time, msg_offset, partition, value
-        FROM weather
-        ORDER BY msg_offset ASC
-    """
-    logger.info("Récupération des données météo depuis PostgreSQL...")
-    try:
-        with conn.cursor() as cur:
-            cur.execute(sql)
-            rows = cur.fetchall()
-        logger.info(f"{len(rows)} enregistrements récupérés depuis PostgreSQL.")
-        return rows
-    except Exception as e:
-        logger.exception("Erreur lors de la récupération des données météo")
-        raise
+def create_table_ref_date(conn):
+    """Crée la table REF_DATE si elle n'existe pas."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS REF_DATE (
+                ref_date TIMESTAMP PRIMARY KEY DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+
+
+        
+def get_last_pull(conn) -> datetime:
+    """Renvoie le dernier timestamp de pull ou None si aucun."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT MAX(ref_date) FROM REF_DATE")
+        last_pull = cur.fetchone()[0]
+    return last_pull
+
+
+def fetch_weather(conn, last_pull: datetime = None):
+    """Récupère seulement les lignes après le dernier pull."""
+    sql = "SELECT date_time, msg_offset, partition, value FROM weather"
+    params = ()
+    if last_pull:
+        sql += " WHERE date_time > %s"
+        params = (last_pull,)
+    sql += " ORDER BY msg_offset ASC"
+
+    logger.info(f"Récupération des données météo depuis PostgreSQL après {last_pull}...")
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+    logger.info(f"{len(rows)} enregistrements récupérés depuis PostgreSQL.")
+    return rows
+
 
 
 # =========================
@@ -98,6 +117,11 @@ def wait_for_hdfs(url: str, timeout_sec: int = 300, step_sec: int = 5):
         time.sleep(step_sec)
     raise RuntimeError(f"HDFS indisponible après {timeout_sec}s (dernier état: {last_err})")
 
+def insert_pull_timestamp(conn, ts: datetime):
+    """Insère le timestamp du pull courant dans REF_DATE."""
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO REF_DATE(ref_date) VALUES (%s)", (ts,))
+        conn.commit()
 
 def validate_hdfs_base_path(base_path: str):
     """Empêche toute écriture accidentelle à la racine du système HDFS."""
@@ -157,25 +181,55 @@ def export_to_hdfs(client: InsecureClient, dir_path: str, rows):
 def main():
     """Programme principal : lecture PostgreSQL → export vers HDFS."""
     logger.info("Démarrage du processus d’export des données météo vers HDFS.")
-    logger.info(f"Paramètres HDFS : URL={HDFS_URL}, USER={HDFS_USER}, BASE_PATH={HDFS_BASE_PATH}")
 
-    # Pause initiale pour laisser les services se lancer
     initial_delay = int(os.getenv("INITIAL_DELAY_SEC", "30"))
     if initial_delay > 0:
         logger.info(f"Pause initiale de {initial_delay} secondes...")
         time.sleep(initial_delay)
 
-    # Connexion aux services
-    conn = connect_pg()
-    wait_for_hdfs(HDFS_URL)
+    while True:
+        logger.info("=== Nouveau cycle de pull démarré ===")
 
-    # Initialisation du client HDFS
-    hdfs_client = InsecureClient(HDFS_URL, user=HDFS_USER)
-    today_dir = target_dir_for(datetime.now(LOCAL_TZ))
+        # Connexion à PostgreSQL
+        logger.info("Connexion à PostgreSQL...")
+        conn = connect_pg()
+        create_table_ref_date(conn)  # Assure que la table existe
+        logger.info("Table REF_DATE vérifiée / créée si nécessaire.")
 
-    # Récupération et export des données
-    rows = fetch_weather(conn)
-    export_to_hdfs(hdfs_client, today_dir, rows)
+        # Récupération du dernier pull
+        last_pull = get_last_pull(conn)
+        if last_pull:
+            logger.info(f"Dernier pull enregistré : {last_pull}")
+        else:
+            logger.info("Aucun pull précédent trouvé. Export complet.")
+
+        # Vérification de la disponibilité de HDFS
+        logger.info("Vérification de la disponibilité de HDFS...")
+        wait_for_hdfs(HDFS_URL)
+
+        # Initialisation du client HDFS
+        hdfs_client = InsecureClient(HDFS_URL, user=HDFS_USER)
+        today_dir = target_dir_for(datetime.now(LOCAL_TZ))
+        logger.info(f"Répertoire HDFS cible pour l'export : {today_dir}")
+
+        # Récupération et export des données
+        rows = fetch_weather(conn, last_pull)
+        if rows:
+            logger.info(f"{len(rows)} nouvelles lignes à exporter vers HDFS...")
+            export_to_hdfs(hdfs_client, today_dir, rows)
+            insert_pull_timestamp(conn, datetime.now(LOCAL_TZ))
+            logger.info("Pull et export terminés avec succès.")
+        else:
+            logger.info("Aucune nouvelle donnée à exporter.")
+
+        # Fermeture de la connexion
+        conn.close()
+        logger.info("Connexion PostgreSQL fermée.")
+
+        # Pause avant le prochain cycle
+        logger.info("Pause de 10 minutes avant le prochain pull...")
+        time.sleep(10*60)  # 10 minutes
+
 
 
 if __name__ == "__main__":
