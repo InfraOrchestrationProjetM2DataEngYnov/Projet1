@@ -1,11 +1,11 @@
-## Projet Orchestration Data Météo (Kafka → PostgreSQL → HDFS → MapReduce/HBase)
+## Projet Orchestration Data Météo (Kafka → PostgreSQL → HDFS → Mapreduce → Hive)
 
 ### Présentation
 Pipeline de données temps réel et batch autour de la météo:
 - Producer récupère les données OpenWeather et les envoie dans Kafka.
 - Consumer lit Kafka et persiste les messages dans PostgreSQL (JSONB).
 - Un job d’export pousse périodiquement les données de PostgreSQL vers HDFS (partition journalière).
-- Un job MapReduce Python agrège les métriques (températures, précipitations, qualité de l’air) et peut écrire les résultats dans HBase.
+- Un job Python ingère les fichiers HDFS dans Hive (via HiveServer2 avec PyHive).
 - Monitoring via Prometheus et Grafana, Kafka UI pour l’observation des topics.
 
 ### Architecture (services principaux)
@@ -15,8 +15,7 @@ Pipeline de données temps réel et batch autour de la météo:
 - Consumer Python (Kafka → PostgreSQL)
 - Hadoop (NameNode + DataNode) exposant WebHDFS
 - Export PostgreSQL → HDFS (Python)
-- MapReduce Python (HDFS → agrégats → HDFS et optionnellement HBase)
-- HBase (optionnel, via Thrift pour HappyBase)
+- MapReduce Python HDFS → Hive (PyHive)
 - Prometheus + Grafana
 
 ![Texte alternatif](image/NotreArchitecture.jpg)
@@ -26,7 +25,7 @@ Flux de données:
 1) OpenWeather → Producer → Kafka topic `weather-api`
 2) Kafka → Consumer → table PostgreSQL `weather`
 3) PostgreSQL → Export Python → HDFS `/user/hdfs/weather/dt=YYYY-MM-DD/weather_*.json`
-4) HDFS → MapReduce Python → `aggregates.jsonl` (+ option HBase)
+4) HDFS → Job Python → Hive (table `weather_data`)
 
 ---
 
@@ -56,7 +55,7 @@ ansible-playbook -i ansible/inventory.ini ansible/site.yml
 
 Ce playbook applique:
 - Rôle `kafka`: déploie Kafka, Kafka UI, PostgreSQL, Producer, Consumer, Prometheus, Grafana.
-- Rôle `hadoop`: déploie NameNode, DataNode, HBase (optionnel), export Postgres→HDFS, MapReduce.
+- Rôle `hadoop`: déploie NameNode, DataNode, export Postgres→HDFS, ingestion HDFS→Hive.
 
 Le réseau Docker externe `infra-kafka` est assuré par Ansible.
 
@@ -80,11 +79,19 @@ Le réseau Docker externe `infra-kafka` est assuré par Ansible.
 - Écrit des fichiers `weather_*.json` en JSON Lines sous `HDFS_BASE_PATH/dt=YYYY-MM-DD`
 - Utilise WebHDFS via `InsecureClient`
 
-### MapReduce Python (`Hadoop/MapReduce/MapReduce.py`)
-- Lit les fichiers HDFS de la partition du jour (ou toutes si configuré)
-- Calcule: moy/min/max température, sommes précipitations (1h/3h), moyenne AQI
-- Écrit `aggregates.jsonl` dans la partition
-- Optionnel: écrit chaque agrégat en HBase (`weather:aggregates`, cf `HBASE_*`)
+### Ingestion HDFS → Hive (`ansible/roles/hadoop/files/MapReduce/Map_Reduce.py`)
+- Parcourt récursivement les partitions `dt=*` sous `HDFS_BASE_PATH` et lit les fichiers `.json` (JSON Lines).
+- Attend HiveServer2, crée la table si absente (schéma ci-dessous), puis insère une ligne par enregistrement.
+
+```sql
+CREATE TABLE IF NOT EXISTS weather_data (
+  event_time STRING,
+  kafka_partition INT,
+  kafka_offset INT,
+  value STRING,
+  ingestion_time TIMESTAMP
+) STORED AS PARQUET;
+```
 
 ### Monitoring
 - Prometheus scrape:
@@ -101,7 +108,7 @@ Le réseau Docker externe `infra-kafka` est assuré par Ansible.
 - Prometheus: http://localhost:9090
 - Grafana: http://localhost:3000 (admin/admin)
 - HDFS NameNode Web UI: http://localhost:9870
-- HBase Web UI Master: http://localhost:16010 (si activé)
+
 
 ---
 
@@ -122,10 +129,11 @@ ansible-playbook -i ansible/inventory.ini ansible/site.yml
   - Vérifier la clé `OPENWEATHER_API_KEY` et l’accès Internet; contrôler les logs du producer.
 - Export HDFS échoue:
   - Vérifier `HDFS_URL` et l’UI du NameNode; attendre que WebHDFS soit up (le code attend automatiquement).
-- MapReduce ne produit rien:
-  - Vérifier qu’il y a des fichiers `weather_*.json` dans la partition du jour; sinon désactiver `MR_PROCESS_ONLY_TODAY`.
-- HBase indisponible:
-  - Mettre `HBASE_ENABLED=false` ou vérifier `HBASE_HOST/PORT` et la présence du service Thrift.
+- Ingestion HDFS → Hive n'insère rien:
+  - Vérifier la présence de dossiers `dt=YYYY-MM-DD` et de fichiers `.json` valides sous `HDFS_BASE_PATH`.
+  - Vérifier `HIVE_HOST`/`HIVE_PORT` et l’accessibilité TCP à HiveServer2.
+  - Consulter les logs du conteneur pour les erreurs PyHive/Thrift et de parsing JSON.
+
 
 ---
 
