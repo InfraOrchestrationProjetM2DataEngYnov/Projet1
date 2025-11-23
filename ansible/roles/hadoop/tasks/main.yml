@@ -30,6 +30,11 @@
     dest: /opt/hadoop/hadoop-pull
     mode: '0755'
 
+- name: Copy spark_transform folder
+  copy:
+    src: "{{ playbook_dir }}/roles/hadoop/files/spark_transform/"
+    dest: /opt/hadoop/jobs
+    mode: '0755'
 
 # --- End additions ---
 

@@ -60,7 +60,8 @@ def create_table_ref_date(conn):
     with conn.cursor() as cur:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS REF_DATE (
-                ref_date TIMESTAMP PRIMARY KEY DEFAULT CURRENT_TIMESTAMP
+                application_name varchar(100) PRIMARY KEY,
+                ref_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         conn.commit()
@@ -70,7 +71,7 @@ def create_table_ref_date(conn):
 def get_last_pull(conn) -> datetime:
     """Renvoie le dernier timestamp de pull ou None si aucun."""
     with conn.cursor() as cur:
-        cur.execute("SELECT MAX(ref_date) FROM REF_DATE")
+        cur.execute("SELECT ref_date FROM REF_DATE where application_name='HDFS'")
         last_pull = cur.fetchone()[0]
     return last_pull
 
@@ -120,7 +121,13 @@ def wait_for_hdfs(url: str, timeout_sec: int = 300, step_sec: int = 5):
 def insert_pull_timestamp(conn, ts: datetime):
     """Insère le timestamp du pull courant dans REF_DATE."""
     with conn.cursor() as cur:
-        cur.execute("INSERT INTO REF_DATE(ref_date) VALUES (%s)", (ts,))
+        cur.execute("""
+            INSERT INTO REF_DATE (application_name, ref_date)
+            VALUES ('HDFS', %s)
+            ON CONFLICT (application_name)
+            DO UPDATE SET ref_date = EXCLUDED.ref_date
+        """, (ts,))
+        
         conn.commit()
 
 def validate_hdfs_base_path(base_path: str):
