@@ -1,14 +1,10 @@
 ---
-<<<<<<< Updated upstream
-- name: Ensure Docker and Compose are installed
-=======
 # ========================
 # TASK.YML COMPLET
 # ========================
 
 # -------------------- Prérequis Docker --------------------
 - name: Install prerequisites for Docker
->>>>>>> Stashed changes
   ansible.builtin.apt:
     name:
       - docker.io
