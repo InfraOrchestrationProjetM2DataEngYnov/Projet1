@@ -26,10 +26,15 @@
 
 - name: Copy pull_Hdfs folder
   copy:
-    src: "{{ playbook_dir }}/../hadoop/"
+    src: "{{ playbook_dir }}/roles/hadoop/files/pull_hdfs/"
     dest: /opt/hadoop/hadoop-pull
     mode: '0755'
 
+- name: Copy spark_transform folder
+  copy:
+    src: "{{ playbook_dir }}/roles/hadoop/files/spark_transform/"
+    dest: /opt/hadoop/jobs
+    mode: '0755'
 
 # --- End additions ---
 
@@ -47,6 +52,8 @@
     restarted: true
     state: present
     env_file: /opt/hadoop/.env
+  environment:
+    DOCKER_API_VERSION: "1.48"
 
 - name: Wait for Namenode to be ready
   community.docker.docker_container_exec:
@@ -75,6 +82,15 @@
   community.docker.docker_container_exec:
     container: namenode
     command: hdfs dfs -chown -R hdfs:supergroup /user/hdfs
+  
+- name: Ensure HDFS safe mode is OFF
+  community.docker.docker_container_exec:
+    container: namenode
+    command: hdfs dfsadmin -safemode leave
+  register: safemode_leave
+  changed_when: "'Safe mode is OFF' in safemode_leave.stdout"
+  failed_when: safemode_leave.rc != 0 and "'Safe mode is already OFF' not in safemode_leave.stdout"
+
   
 - name: Set-up 755 permissions for /user/hdfs
   community.docker.docker_container_exec:

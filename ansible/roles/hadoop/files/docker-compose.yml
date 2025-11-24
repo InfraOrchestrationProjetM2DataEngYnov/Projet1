@@ -45,6 +45,169 @@ services:
     networks:
       - infra-kafka
 
+  # Spark (master)
+  spark-master:
+    image: bde2020/spark-master:3.1.1-hadoop3.2
+    container_name: spark-master
+    env_file:
+      - .env
+    environment:
+      - ENABLE_INIT_DAEMON=false
+      - SPARK_MODE=master
+      - SPARK_MASTER_HOST=spark-master
+      - SPARK_MASTER_PORT=7077
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+    ports:
+      - "18080:8080"   # Spark master UI (changed host port)
+      - "7077:7077"    # Spark master port
+    depends_on:
+      - namenode
+    networks:
+      - infra-kafka
+
+  # Spark (worker)
+  spark-worker:
+    image: bde2020/spark-worker:3.1.1-hadoop3.2
+    container_name: spark-worker
+    env_file:
+      - .env
+    environment:
+      - ENABLE_INIT_DAEMON=false
+      - SPARK_MODE=worker
+      - SPARK_MASTER=spark://spark-master:7077
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+    depends_on:
+      - spark-master
+      - namenode
+    networks:
+      - infra-kafka
+
+  # DB for Hive Metastore
+  hive-metastore-postgresql:
+    image: postgres:13
+    container_name: hive-metastore-postgresql
+    environment:
+      - POSTGRES_USER=hive
+      - POSTGRES_PASSWORD=hive
+      - POSTGRES_DB=metastore
+    volumes:
+      - hive-metastore-db:/var/lib/postgresql/data
+    networks:
+      - infra-kafka
+
+  hive-schematool:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-schematool
+    env_file:
+      - .env
+    environment:
+      - HIVE_METASTORE_DB_HOST=hive-metastore-postgresql
+      - HIVE_METASTORE_DB_NAME=metastore
+      - HIVE_METASTORE_DB_USER=hive
+      - HIVE_METASTORE_DB_PASS=hive
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+      - SERVICE_PRECONDITION=hive-metastore-postgresql:5432
+    depends_on:
+      - hive-metastore-postgresql
+    networks:
+      - infra-kafka
+    command: >
+      bash -lc "
+      schematool
+        -dbType postgres
+        -initSchema
+        -userName ${HIVE_METASTORE_DB_USER}
+        -passWord ${HIVE_METASTORE_DB_PASS}
+        -url jdbc:postgresql://${HIVE_METASTORE_DB_HOST}:5432/${HIVE_METASTORE_DB_NAME}
+        -verbose
+      "
+    restart: "no"
+
+
+
+
+
+  # VRAI METASTORE THRIFT
+  hive-metastore:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-metastore
+    env_file:
+      - .env
+    environment:
+      - HIVE_METASTORE_DB_HOST=hive-metastore-postgresql
+      - HIVE_METASTORE_DB_NAME=metastore
+      - HIVE_METASTORE_DB_USER=hive
+      - HIVE_METASTORE_DB_PASS=hive
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+      - SERVICE_PRECONDITION=namenode:8020 hive-metastore-postgresql:5432
+    depends_on:
+      - namenode
+      - hive-metastore-postgresql
+      - hive-schematool
+    ports:
+      - "9083:9083"
+    networks:
+      - infra-kafka
+
+
+
+
+
+
+
+
+
+    
+
+  # HIVESERVER2 QUI PARLE AU METASTORE CI-DESSUS
+  hive-server:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-server
+    env_file:
+      - .env
+    environment:
+      - HIVE_METASTORE_URI=thrift://hive-metastore:9083
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+      - SERVICE_PRECONDITION=hive-metastore:9083
+    depends_on:
+      - hive-metastore
+    command: /opt/hive/bin/hiveserver2
+    ports:
+      - "10000:10000"
+    networks:
+      - infra-kafka
+
+
+
+  # Ton job Spark qui remplace MapReduce (optionnel / à adapter)
+  spark-job:
+    build: ./jobs
+    container_name: spark-job
+    env_file:
+      - .env
+    depends_on:
+      - spark-master
+      - hive-metastore
+      - hive-server
+    networks:
+      - infra-kafka
+    volumes:
+      - ./jobs:/opt/hadoop/jobs
+    command:
+      - /spark/bin/spark-submit
+      - --master
+      - spark://spark-master:7077
+      - --deploy-mode
+      - client
+      - --conf
+      - spark.sql.warehouse.dir=hdfs://namenode:8020/user/hive/warehouse
+      - --conf
+      - hive.metastore.uris=thrift://hive-metastore:9083
+      - /opt/hadoop/jobs/json_to_hive_daemon.py
+
+
+
+
 networks:
   infra-kafka:
     external: true
@@ -52,3 +215,4 @@ networks:
 volumes:
   namenode:
   datanode:
+  hive-metastore-db:

@@ -1,0 +1,67 @@
+---
+- name: Ensure Docker and Compose are installed
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-compose
+    state: present
+    update_cache: true
+
+- name: Create project directory
+  file:
+    path: /opt/monitoring
+    state: directory
+
+- name: Copy docker-compose file
+  copy:
+    src: files/docker-compose.yml
+    dest: /opt/monitoring/docker-compose.yml
+
+- name: Generate .env from template
+  template:
+    src: templates/.env.j2
+    dest: /opt/monitoring/.env
+
+# --- Added sections below ---
+
+- name: Copy prometheus folder
+  copy:
+    src: "{{ playbook_dir }}/roles/monitoring/files/prometheus/"
+    dest: /opt/monitoring/prometheus
+    mode: '0755'
+
+- name: Copy dashboards folder
+  copy:
+    src: "{{ playbook_dir }}/roles/monitoring/files/dashboards/"
+    dest: /opt/monitoring/dashboards
+    mode: '0755'
+
+# optionnel mais utile pour être sûr :
+- name: Check Prometheus config exists
+  stat:
+    path: /opt/monitoring/prometheus/prometheus.yml
+  register: prometheus_conf
+
+- name: Fail if Prometheus config is missing
+  fail:
+    msg: "Prometheus config not found at /opt/monitoring/prometheus/prometheus.yml"
+  when: not prometheus_conf.stat.exists
+  
+# --- End additions ---
+
+- name: Ensure external Docker network infra-kafka exists
+  community.docker.docker_network:
+    name: infra-kafka
+    state: present
+
+- name: Run stack with environment file manually loaded
+  community.docker.docker_compose:
+    project_src: /opt/monitoring
+    files:
+      - docker-compose.yml
+    build: true
+    restarted: true
+    state: present
+    env_file: /opt/monitoring/.env
+  environment:
+    DOCKER_API_VERSION: "1.48"
