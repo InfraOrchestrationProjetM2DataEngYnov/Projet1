@@ -314,30 +314,3 @@
     name: hive-server
     state: started
     restart: yes
-
-
-# ========================
-# BUILD & START PULL_HDFS CONTAINER
-# ========================
-
-- name: Build pull_HDFS Docker image locally
-  community.docker.docker_image:
-    name: pull_hdfs_local
-    tag: latest
-    source: build
-    build:
-      path: /opt/hadoop/hadoop-pull
-      dockerfile: Dockerfile
-    force_source: true
-    
-- name: Start pull_HDFS container
-  community.docker.docker_container:
-    name: pull-hdfs
-    image: pull_hdfs_local:latest
-    state: started
-    restart_policy: always
-    networks:
-      - name: infra-kafka
-    volumes:
-      - /opt/hadoop/hadoop-pull:/app
-    env_file: /opt/hadoop/.env
