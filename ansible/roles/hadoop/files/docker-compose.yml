@@ -45,7 +45,6 @@ services:
     networks:
       - infra-kafka
 
-  # Spark (master)
   spark-master:
     image: bde2020/spark-master:3.1.1-hadoop3.2
     container_name: spark-master
@@ -56,16 +55,16 @@ services:
       - SPARK_MODE=master
       - SPARK_MASTER_HOST=spark-master
       - SPARK_MASTER_PORT=7077
+      - SPARK_MASTER_WEBUI_PORT=8080
       - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
     ports:
-      - "18080:8080"   # Spark master UI (changed host port)
-      - "7077:7077"    # Spark master port
+      - "18080:8080"
+      - "7077:7077"
     depends_on:
       - namenode
     networks:
       - infra-kafka
 
-  # Spark (worker)
   spark-worker:
     image: bde2020/spark-worker:3.1.1-hadoop3.2
     container_name: spark-worker
@@ -76,13 +75,16 @@ services:
       - SPARK_MODE=worker
       - SPARK_MASTER=spark://spark-master:7077
       - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+      - SPARK_WORKER_CORES=4        # Augmenter à 4
+      - SPARK_WORKER_MEMORY=4g      # Augmenter à 4g
     depends_on:
       - spark-master
       - namenode
     networks:
       - infra-kafka
+    ports:
+      - "8081:8081"
 
-  # DB for Hive Metastore
   hive-metastore-postgresql:
     image: postgres:13
     container_name: hive-metastore-postgresql
@@ -94,6 +96,12 @@ services:
       - hive-metastore-db:/var/lib/postgresql/data
     networks:
       - infra-kafka
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hive -d metastore"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   hive-schematool:
     image: bde2020/hive:2.3.2-postgresql-metastore
@@ -106,60 +114,47 @@ services:
       - HIVE_METASTORE_DB_USER=hive
       - HIVE_METASTORE_DB_PASS=hive
       - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
-      - SERVICE_PRECONDITION=hive-metastore-postgresql:5432
     depends_on:
-      - hive-metastore-postgresql
+      hive-metastore-postgresql:
+        condition: service_healthy
     networks:
       - infra-kafka
     command: >
-      bash -lc "
-      schematool
-        -dbType postgres
-        -initSchema
-        -userName ${HIVE_METASTORE_DB_USER}
-        -passWord ${HIVE_METASTORE_DB_PASS}
-        -url jdbc:postgresql://${HIVE_METASTORE_DB_HOST}:5432/${HIVE_METASTORE_DB_NAME}
-        -verbose
+      bash -c "
+      echo 'Waiting for PostgreSQL to be fully ready...' &&
+      sleep 15 &&
+      echo 'Attempting to initialize Hive schema...' &&
+      /opt/hive/bin/schematool -dbType postgres -initSchema 2>&1 || 
+      (echo 'Init failed or schema exists, checking info...' && /opt/hive/bin/schematool -dbType postgres -info)
       "
     restart: "no"
 
-
-
-
-
-  # VRAI METASTORE THRIFT
   hive-metastore:
     image: bde2020/hive:2.3.2-postgresql-metastore
     container_name: hive-metastore
     env_file:
       - .env
     environment:
-      - HIVE_METASTORE_DB_HOST=hive-metastore-postgresql
-      - HIVE_METASTORE_DB_NAME=metastore
-      - HIVE_METASTORE_DB_USER=hive
-      - HIVE_METASTORE_DB_PASS=hive
       - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
       - SERVICE_PRECONDITION=namenode:8020 hive-metastore-postgresql:5432
+      # Configuration PostgreSQL via HIVE_SITE_CONF
+      - HIVE_SITE_CONF_javax_jdo_option_ConnectionURL=jdbc:postgresql://hive-metastore-postgresql:5432/metastore
+      - HIVE_SITE_CONF_javax_jdo_option_ConnectionDriverName=org.postgresql.Driver
+      - HIVE_SITE_CONF_javax_jdo_option_ConnectionUserName=hive
+      - HIVE_SITE_CONF_javax_jdo_option_ConnectionPassword=hive
+      - HIVE_SITE_CONF_hive_metastore_warehouse_dir=/user/hive/warehouse
     depends_on:
-      - namenode
-      - hive-metastore-postgresql
-      - hive-schematool
+      hive-metastore-postgresql:
+        condition: service_healthy
+      namenode:
+        condition: service_started
     ports:
       - "9083:9083"
     networks:
       - infra-kafka
+    command: /opt/hive/bin/hive --service metastore
+    restart: unless-stopped
 
-
-
-
-
-
-
-
-
-    
-
-  # HIVESERVER2 QUI PARLE AU METASTORE CI-DESSUS
   hive-server:
     image: bde2020/hive:2.3.2-postgresql-metastore
     container_name: hive-server
@@ -171,15 +166,12 @@ services:
       - SERVICE_PRECONDITION=hive-metastore:9083
     depends_on:
       - hive-metastore
-    command: /opt/hive/bin/hiveserver2
     ports:
       - "10000:10000"
+      - "10002:10002"
     networks:
       - infra-kafka
 
-
-
-  # Ton job Spark qui remplace MapReduce (optionnel / à adapter)
   spark-job:
     build: ./jobs
     container_name: spark-job
@@ -193,20 +185,18 @@ services:
       - infra-kafka
     volumes:
       - ./jobs:/opt/hadoop/jobs
-    command:
-      - /spark/bin/spark-submit
-      - --master
-      - spark://spark-master:7077
-      - --deploy-mode
-      - client
-      - --conf
-      - spark.sql.warehouse.dir=hdfs://namenode:8020/user/hive/warehouse
-      - --conf
-      - hive.metastore.uris=thrift://hive-metastore:9083
-      - /opt/hadoop/jobs/json_to_hive_daemon.py
-
-
-
+    command: >
+      bash -c "
+      echo 'Waiting 90 seconds for services...' &&
+      sleep 90 &&
+      exec /spark/bin/spark-submit
+      --master spark://spark-master:7077
+      --deploy-mode client
+      --conf spark.sql.warehouse.dir=hdfs://namenode:8020/user/hive/warehouse
+      --conf spark.hadoop.hive.metastore.uris=thrift://hive-metastore:9083
+      /opt/hadoop/jobs/json_to_hive_daemon.py
+      "
+    restart: unless-stopped
 
 networks:
   infra-kafka:

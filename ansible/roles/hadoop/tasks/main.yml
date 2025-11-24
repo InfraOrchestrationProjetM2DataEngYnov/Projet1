@@ -1,9 +1,41 @@
 ---
-- name: Ensure Docker and Compose are installed
+# -------------------- Prérequis Docker --------------------
+- name: Install prerequisites for Docker
   ansible.builtin.apt:
     name:
-      - docker.io
-      - docker-compose
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: true
+
+- name: Create keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Add Docker GPG key
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.gpg
+    mode: '0644'
+
+- name: Add Docker repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+    state: present
+    filename: docker
+
+- name: Install Docker Engine and Compose plugin
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
     state: present
     update_cache: true
 
@@ -55,53 +87,262 @@
   environment:
     DOCKER_API_VERSION: "1.48"
 
+# ===== POSTGRESQL & HIVE SCHEMA INITIALIZATION =====
+
+- name: Wait for PostgreSQL to be ready
+  community.docker.docker_container_exec:
+    container: hive-metastore-postgresql
+    command: pg_isready -U hive -d metastore
+  register: pg_ready
+  retries: 15
+  delay: 5
+  until: pg_ready.rc == 0
+
+- name: Check if Hive schema already exists
+  shell: |
+    docker exec hive-metastore-postgresql psql -U hive -d metastore -t -c \
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_name='VERSION'" 2>/dev/null || echo "0"
+  register: schema_check
+  changed_when: false
+
+- name: Display schema check result
+  debug:
+    msg: "Schema check: {{ schema_check.stdout | trim }} VERSION table(s) found"
+
+- name: Stop Hive Metastore before schema init  # ← NOUVEAU
+  community.docker.docker_container:
+    name: hive-metastore
+    state: stopped
+  ignore_errors: yes
+
+- name: Initialize Hive Metastore schema with PostgreSQL config
+  shell: |
+    docker run --rm \
+      --network infra-kafka \
+      -e HIVE_SITE_CONF_javax_jdo_option_ConnectionURL=jdbc:postgresql://hive-metastore-postgresql:5432/metastore \
+      -e HIVE_SITE_CONF_javax_jdo_option_ConnectionDriverName=org.postgresql.Driver \
+      -e HIVE_SITE_CONF_javax_jdo_option_ConnectionUserName=hive \
+      -e HIVE_SITE_CONF_javax_jdo_option_ConnectionPassword=hive \
+      bde2020/hive:2.3.2-postgresql-metastore \
+      /opt/hive/bin/schematool -dbType postgres -initSchema -verbose
+  when: (schema_check.stdout | trim) == '0'
+  register: schema_init_verbose
+
+- name: Display full schema initialization output  # ← NOUVEAU
+  debug:
+    var: schema_init_verbose
+  when: schema_init_verbose.changed
+
+- name: Verify tables were actually created  # ← NOUVEAU
+  shell: |
+    docker exec hive-metastore-postgresql psql -U hive -d metastore -t -c \
+    "SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name"
+  register: all_tables
+  changed_when: false
+
+- name: Display all created tables  # ← NOUVEAU
+  debug:
+    msg: "Tables in metastore DB: {{ all_tables.stdout_lines }}"
+
+- name: Verify schema was created (legacy check)
+  shell: |
+    docker exec hive-metastore-postgresql psql -U hive -d metastore -c "\dt" | head -20
+  register: tables_list
+  changed_when: false
+
+- name: Display created tables (legacy)
+  debug:
+    var: tables_list.stdout_lines
+
+- name: Ensure Hive Metastore is started  # ← NOUVEAU
+  community.docker.docker_container:
+    name: hive-metastore
+    state: started
+
+- name: Wait longer for Metastore to initialize  # ← NOUVEAU
+  pause:
+    seconds: 30
+
+
 - name: Wait for Namenode to be ready
   community.docker.docker_container_exec:
     container: namenode
     command: bash -c "hdfs dfsadmin -report"
   register: namenode_status
-  retries: 10
+  retries: 15
   delay: 10
   until: namenode_status.rc == 0
 
-
-# --- HDFS initialization tasks ---
-
-- name: Create /user/hdfs/weather directory in HDFS
-  community.docker.docker_container_exec:
-    container: namenode
-    command: hdfs dfs -mkdir -p /user/hdfs/weather
-
-- name: List contents of /user/hdfs
-  community.docker.docker_container_exec:
-    container: namenode
-    command: hdfs dfs -ls /user/hdfs
-  register: hdfs_list
-
-- name: Put owner hdfs for /user/hdfs
-  community.docker.docker_container_exec:
-    container: namenode
-    command: hdfs dfs -chown -R hdfs:supergroup /user/hdfs
-  
 - name: Ensure HDFS safe mode is OFF
   community.docker.docker_container_exec:
     container: namenode
     command: hdfs dfsadmin -safemode leave
   register: safemode_leave
+  retries: 5
+  delay: 10
+  until: safemode_leave.rc == 0 or 'Safe mode is already OFF' in safemode_leave.stdout
   changed_when: "'Safe mode is OFF' in safemode_leave.stdout"
-  failed_when: safemode_leave.rc != 0 and "'Safe mode is already OFF' not in safemode_leave.stdout"
 
-  
-- name: Set-up 755 permissions for /user/hdfs
+
+
+# === Préparation pour Hive ===
+- name: Create and configure Hive directories in HDFS
   community.docker.docker_container_exec:
     container: namenode
-    command: hdfs dfs -chmod -R 755 /user/hdfs
+    command: |
+      bash -c "
+      echo 'Creating Hive directories...' &&
+      hdfs dfs -mkdir -p /user/hive/warehouse &&
+      hdfs dfs -mkdir -p /tmp/hive &&
+      hdfs dfs -mkdir -p /tmp &&
+      echo 'Setting permissions...' &&
+      hdfs dfs -chmod 1777 /user/hive/warehouse &&
+      hdfs dfs -chmod 1777 /tmp &&
+      hdfs dfs -chmod 1777 /tmp/hive &&
+      echo 'Setting ownership...' &&
+      hdfs dfs -chown -R hive:supergroup /user/hive &&
+      hdfs dfs -chown -R hive:supergroup /tmp/hive &&
+      echo 'Verification:' &&
+      hdfs dfs -ls /tmp/ &&
+      hdfs dfs -ls /user/hive/
+      "
+  register: hive_setup
+  failed_when: 
+    - hive_setup.rc != 0
+    - "'File exists' not in hive_setup.stderr"
 
-- name: Set-up 755 permissions for /user/hdfs/weather
+- name: Display Hive directories setup result
+  debug:
+    var: hive_setup.stdout_lines
+
+# === Préparation pour vos données ===
+- name: Create /user/hdfs/weather directory in HDFS
   community.docker.docker_container_exec:
     container: namenode
-    command: hdfs dfs -chmod -R 755 /user/hdfs/weather
+    command: hdfs dfs -mkdir -p /user/hdfs/weather
 
-- name: Show HDFS directory list
+- name: Set ownership and permissions for /user/hdfs
+  community.docker.docker_container_exec:
+    container: namenode
+    command: |
+      bash -c "
+      hdfs dfs -chown -R hdfs:supergroup /user/hdfs &&
+      hdfs dfs -chmod -R 755 /user/hdfs
+      "
+
+
+
+- name: Check Hive Metastore container status
+  shell: docker ps -a --filter name=hive-metastore --format "{{ '{{.Status}}' }}"
+  register: metastore_container_status
+  changed_when: false
+
+- name: Display Metastore container status  # ← NOUVEAU
+  debug:
+    var: metastore_container_status.stdout
+
+- name: Get Hive Metastore logs  # ← NOUVEAU
+  shell: docker logs hive-metastore --tail 50
+  register: metastore_logs_check
+  changed_when: false
+
+- name: Display Metastore logs for diagnosis  # ← NOUVEAU
+  debug:
+    var: metastore_logs_check.stdout_lines
+
+- name: Check if Metastore process is running  # ← NOUVEAU
+  shell: docker exec hive-metastore ps aux | grep -i metastore | grep -v grep || echo "No metastore process found"
+  register: metastore_process_check
+  changed_when: false
+
+- name: Display Metastore process status  # ← NOUVEAU
+  debug:
+    var: metastore_process_check.stdout
+
+- name: Check if port 9083 is listening  # ← NOUVEAU
+  shell: docker exec hive-metastore netstat -tuln 2>/dev/null | grep 9083 || docker exec hive-metastore ss -tuln 2>/dev/null | grep 9083 || echo "Port 9083 not listening"
+  register: port_check
+  changed_when: false
+
+- name: Display port listening status  # ← NOUVEAU
+  debug:
+    var: port_check.stdout
+
+- name: Wait for Hive Metastore port to be available
+  wait_for:
+    host: localhost
+    port: 9083
+    state: started
+    timeout: 120
+    delay: 5
+  delegate_to: localhost
+  ignore_errors: yes  # ← MODIFIÉ pour ne pas bloquer
+  register: port_wait_result
+
+- name: Show port wait result  # ← NOUVEAU
+  debug:
+    var: port_wait_result
+
+- name: Wait for Hive Metastore port to be available
+  wait_for:
+    host: localhost
+    port: 9083
+    state: started
+    timeout: 60
+    delay: 5
+  delegate_to: localhost
+
+- name: Confirm Metastore is ready
+  debug:
+    msg: "✓ Hive Metastore is listening on port 9083"
+
+# NOUVELLE TASK ICI
+- name: Fix permissions for all Hive directories recursively
+  community.docker.docker_container_exec:
+    container: namenode
+    command: |
+      bash -c "
+      hdfs dfs -chmod -R 1777 /tmp/hive &&
+      hdfs dfs -chmod -R 1777 /user/hive/warehouse &&
+      echo 'Permissions fixed. Current state:' &&
+      hdfs dfs -ls -R /tmp/hive
+      "
+  register: hive_perms_fix
+
+- name: Display fixed permissions
+  debug:
+    var: hive_perms_fix.stdout_lines
+
+- name: List HDFS structure
+  community.docker.docker_container_exec:
+    container: namenode
+    command: hdfs dfs -ls -R /user
+  register: hdfs_list
+
+- name: Show HDFS directory structure
   debug:
     var: hdfs_list.stdout
+
+# === Redémarrage des services Hive ===
+- name: Restart Hive Metastore after HDFS setup
+  community.docker.docker_container:
+    name: hive-metastore
+    state: started
+    restart: yes
+
+- name: Wait for Hive Metastore to be ready
+  community.docker.docker_container_exec:
+    container: hive-metastore
+    command: bash -c "timeout 2 bash -c '</dev/tcp/localhost/9083' 2>/dev/null && echo 'Port 9083 open'"
+  register: metastore_status
+  retries: 15
+  delay: 10
+  until: metastore_status.rc == 0
+  ignore_errors: yes
+
+
+- name: Restart Hive Server after Metastore is ready
+  community.docker.docker_container:
+    name: hive-server
+    state: started
+    restart: yes
