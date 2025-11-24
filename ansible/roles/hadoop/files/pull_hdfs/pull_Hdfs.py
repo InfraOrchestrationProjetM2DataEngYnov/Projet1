@@ -71,9 +71,12 @@ def create_table_ref_date(conn):
 def get_last_pull(conn) -> datetime:
     """Renvoie le dernier timestamp de pull ou None si aucun."""
     with conn.cursor() as cur:
-        cur.execute("SELECT ref_date FROM REF_DATE where application_name='HDFS'")
-        last_pull = cur.fetchone()[0]
-    return last_pull
+        cur.execute("SELECT ref_date FROM REF_DATE WHERE application_name='HDFS'")
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return row[0]
+
 
 
 def fetch_weather(conn, last_pull: datetime = None):
@@ -179,7 +182,6 @@ def export_to_hdfs(client: InsecureClient, dir_path: str, rows):
     except Exception:
         logger.exception("Erreur lors de l'export vers HDFS")
         raise
-
 
 # =========================
 # FONCTION PRINCIPALE
