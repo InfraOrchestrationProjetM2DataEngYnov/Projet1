@@ -234,34 +234,79 @@ def process_files(spark, paths: List[str], database_name: str, table_name: str):
 
 # ------------ Main daemon ------------
 
+def wait_for_hdfs_ready(spark, max_retries=30, delay=10):
+    """
+    Wait for HDFS to exit safe mode.
+    """
+    sc = spark.sparkContext
+    jvm = sc._jvm
+    
+    FileSystem = jvm.org.apache.hadoop.fs.FileSystem
+    hadoop_conf = sc._jsc.hadoopConfiguration()
+    
+    for attempt in range(max_retries):
+        try:
+            fs = FileSystem.get(hadoop_conf)
+            # Try to create a test directory
+            test_path = jvm.org.apache.hadoop.fs.Path("/tmp/.hdfs_ready_test")
+            fs.mkdirs(test_path)
+            fs.delete(test_path, True)
+            logger.info("HDFS is ready and out of safe mode")
+            return True
+        except Exception as e:
+            if "SafeModeException" in str(e):
+                logger.warning(f"HDFS in safe mode, waiting... (attempt {attempt+1}/{max_retries})")
+                time.sleep(delay)
+            else:
+                logger.error(f"Unexpected error checking HDFS: {e}")
+                raise
+    
+    raise RuntimeError("HDFS did not exit safe mode in time")
+
 def main():
     application_name = "SPARK"
-    # Let Hadoop defaultFS handle the scheme; path is from HDFS root
+
     base_path = "/user/hdfs/weather"
     database_name = "weather"
     table_name = "events"
-    poll_interval_seconds = 600  # 10 minutes
-
+    poll_interval_seconds = 600
+    # Let Hadoop defaultFS handle the scheme; path is from HDFS root    
     spark = (
         SparkSession.builder
-        .appName("WeatherToHiveDaemon")
-        # HDFS as default FS
-        .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:8020")
-        # Hive metastore
-        .config("hive.metastore.uris", "thrift://hive-metastore:9083")
-        # Warehouse sur HDFS (ce que tu regardes dans l’UI)
-        .config("spark.sql.warehouse.dir", "hdfs://namenode:8020/user/hive/warehouse")
-        .enableHiveSupport()
-        .getOrCreate()
-    )
+                .appName("WeatherToHiveDaemon")
+                .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:8020")
+                .config("hive.metastore.uris", "thrift://hive-metastore:9083")
+                .config("spark.sql.warehouse.dir", "hdfs://namenode:8020/user/hive/warehouse")
+                .enableHiveSupport()
+                .getOrCreate()
+                )
 
+    # AJOUT : Attendre que HDFS soit prêt
+    logger.info("Checking if HDFS is ready...")
+    wait_for_hdfs_ready(spark)
+    
+    # AJOUT : Forcer la sortie du safe mode si nécessaire
+    try:
+        sc = spark.sparkContext
+        jvm = sc._jvm
+        FileSystem = jvm.org.apache.hadoop.fs.FileSystem
+        hadoop_conf = sc._jsc.hadoopConfiguration()
+        fs = FileSystem.get(hadoop_conf)
+        
+        # Essayer de désactiver le safe mode (si on a les permissions)
+        logger.info("Attempting to leave safe mode...")
+        dfs_admin = jvm.org.apache.hadoop.hdfs.tools.DFSAdmin()
+        dfs_admin.setConf(hadoop_conf)
+        dfs_admin.run(["-safemode", "leave"])
+    except Exception as e:
+        logger.warning(f"Could not force leave safe mode: {e}")
 
     watermark = get_ref_date(application_name)
-    print(f"[INFO] Starting daemon with initial watermark = {watermark.isoformat()}")
+    logger.info(f"Starting daemon with initial watermark = {watermark.isoformat()}")
 
     try:
         while True:
-            print("[INFO] Scanning HDFS for new JSON files under", base_path)
+            logger.info("Scanning HDFS for new JSON files under %s", base_path)
             new_paths, latest_dt = list_new_files(spark, base_path, watermark)
 
             if new_paths:
@@ -275,11 +320,11 @@ def main():
                 new_watermark = max(latest_dt, watermark)
                 update_ref_date(application_name, new_watermark)
                 watermark = new_watermark
-                print(f"[INFO] Updated watermark to {watermark.isoformat()}")
+                logger.info(f"Updated watermark to {watermark.isoformat()}")
             else:
-                print("[INFO] No new files found since last watermark.")
+                logger.info("No new files found since last watermark.")
 
-            print(f"[INFO] Sleeping for {poll_interval_seconds} seconds.")
+            logger.info(f"Sleeping for {poll_interval_seconds} seconds.")
             time.sleep(poll_interval_seconds)
     finally:
         spark.stop()
