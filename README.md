@@ -69,6 +69,17 @@ Le réseau Docker externe `infra-kafka` est assuré par Ansible.
 
 ## Détails techniques
 
+### Ansible (infrastructure as code)
+- L’orchestration complète est décrite dans Ansible, point d’entrée : `ansible/site.yml`.
+- Trois rôles principaux :
+  - `roles/ingestion` : Kafka, PostgreSQL, producer, consumer, bootstrap des données.
+  - `roles/hadoop` : Hadoop (NameNode/DataNode), WebHDFS, Hive (metastore + HiveServer2), Spark (`spark-job`), export PostgreSQL → HDFS.
+  - `roles/monitoring` : Prometheus, Grafana, exporters (PostgreSQL, Kafka, Node).
+- Chaque rôle :
+  - possède son propre `docker-compose.yml` et ses templates `templates/.env.j2`,
+  - est paramétré via `vars/main.yml` (surchargé ensuite par la CI/GitHub Actions si besoin),
+  - est appelé depuis `site.yml` pour permettre un déploiement complet via une **seule commande** `ansible-playbook`.
+
 ### Fréquences d’exécution (batch 10 minutes)
 - **Export API Weather → Kafka → PostgreSQL**:
   - le producer interroge l’API OpenWeather et envoie les messages dans Kafka toutes les **10 minutes**.
