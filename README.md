@@ -130,7 +130,6 @@ Le réseau Docker externe `infra-kafka` est assuré par Ansible.
   - via HiveServer2 (`hive-server`, port 10000) avec Beeline, DBeaver, PyHive, Spark SQL, etc.
   - exemple de requête d’agrégation:
 
-
 ### Monitoring
 - Prometheus scrape:
   - `postgres-exporter:9187`
@@ -179,7 +178,7 @@ ansible-playbook -i ansible/inventory.ini ansible/site.yml
 ---
 
 ## Notes
-- Les fichiers de rôles Ansible référencent des templates `.env.j2` non inclus: pensez à créer le `.env` à la main sur la cible ou à ajouter vos templates.
+
 - Les volumes Docker persisteront les données Kafka/PostgreSQL/HDFS entre redéploiements.
 - Le topic Kafka par défaut est `weather-api` (auto-création activée côté broker).
 
