@@ -60,8 +60,9 @@ ansible-playbook -i ansible/inventory.ini ansible/site.yml
 ```
 
 Ce playbook applique:
-- Rôle `kafka`: déploie Kafka, Kafka UI, PostgreSQL, Producer, Consumer, Prometheus, Grafana.
-- Rôle `hadoop`: déploie NameNode, DataNode, export Postgres→HDFS, ingestion HDFS→Hive.
+- Rôle `kafka` (ingestion): déploie Kafka, Kafka UI, PostgreSQL, Producer, Consumer.
+- Rôle `hadoop`: déploie NameNode, DataNode, Spark (`spark-master`, `spark-worker`, `spark-job`), export Postgres→HDFS, ingestion HDFS→Hive.
+- Rôle `monitoring`: déploie Prometheus, Grafana et les exporters (PostgreSQL, Kafka, Node).
 
 Le réseau Docker externe `infra-kafka` est assuré par Ansible.
 
@@ -129,15 +130,6 @@ Le réseau Docker externe `infra-kafka` est assuré par Ansible.
   - via HiveServer2 (`hive-server`, port 10000) avec Beeline, DBeaver, PyHive, Spark SQL, etc.
   - exemple de requête d’agrégation:
 
-```sql
-SELECT
-  date_trunc('hour', obs_ts_utc) AS heure,
-  avg(temp) AS temperature_moyenne
-FROM weather.events
-GROUP BY date_trunc('hour', obs_ts_utc)
-ORDER BY heure DESC
-LIMIT 24;
-```
 
 ### Monitoring
 - Prometheus scrape:
