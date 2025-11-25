@@ -1,4 +1,4 @@
-## Projet Orchestration Data Météo (Kafka → PostgreSQL → HDFS → Mapreduce → Hive)
+## Projet Orchestration Data Météo (Kafka → PostgreSQL → HDFS → Spark/MapReduce → Hive)
 
 ### Présentation
 Pipeline de données temps réel et batch autour de la météo:
@@ -10,13 +10,13 @@ Pipeline de données temps réel et batch autour de la météo:
 
 ### Architecture (services principaux)
 - Kafka (mode KRaft) + Kafka UI
-- PostgreSQL + postgres-exporter (Prometheus)
+- PostgreSQL + `postgres-exporter` (Prometheus)
 - Producer Python (OpenWeather → Kafka)
 - Consumer Python (Kafka → PostgreSQL)
 - Hadoop (NameNode + DataNode) exposant WebHDFS
-- Export PostgreSQL → HDFS (Python)
-- MapReduce Python HDFS → Hive (PyHive)
-- Prometheus + Grafana
+- Export PostgreSQL → HDFS (Python, `pull_Hdfs.py`)
+- Spark job / MapReduce Python HDFS → Hive (Spark + HiveServer2)
+- Prometheus + Grafana + exporters (Kafka, Node, PostgreSQL)
 
 ![Texte alternatif](image/NotreArchitecture.jpg)
 
@@ -24,24 +24,30 @@ Pipeline de données temps réel et batch autour de la météo:
 Flux de données:
 1) OpenWeather → Producer → Kafka topic `weather-api`
 2) Kafka → Consumer → table PostgreSQL `weather`
-3) PostgreSQL → Export Python → HDFS `/user/hdfs/weather/dt=YYYY-MM-DD/weather_*.json`
-4) HDFS → Job Python → Hive (table `weather_data`)
+3) PostgreSQL → Export Python (`pull_Hdfs.py`) → HDFS `/user/hdfs/weather/dt=YYYY-MM-DD/weather_*.json`
+4) HDFS → Job Spark/Python → Hive (base `weather`, table `events` en Parquet)
 
 ---
 
 ## Prérequis
-- Docker et Docker Compose
-- Ansible (pour le déploiement automatisé)
-- Accès Internet (API OpenWeather)
+- **Docker** et **Docker Compose**
+- **Ansible** (pour le déploiement automatisé)
+- **Accès Internet** (API OpenWeather)
 
 Facultatif pour tests/CLI:
-- Python 3.12+ si vous souhaitez exécuter localement les scripts
+- **Python 3.12+** si vous souhaitez exécuter localement les scripts
 
 ---
 
-```
+### Gestion des fichiers `.env`
 
-Note: Les rôles Ansible référencent des templates `.env.j2`. S’ils ne sont pas fournis, utilisez le bloc ci-dessus pour générer manuellement un `.env` sur la machine cible.
+- Chaque **rôle Ansible** (`ingestion`, `hadoop`, `monitoring`, etc.) dispose de son propre template `templates/.env.j2`.
+- Les valeurs sont injectées à partir des fichiers `vars/main.yml` du rôle correspondant.
+- À terme, ces `vars/main.yml` sont pensés pour être **écrasés par une GitHub Action** alimentée par les *secrets* du repository (pas de secrets en clair dans le code / README).
+
+Pour connaître la liste exacte des variables (OpenWeather, Kafka, PostgreSQL, HDFS, Hive…), se référer à:
+- `ansible/roles/*/vars/main.yml`
+- `ansible/roles/*/templates/.env.j2`
 
 ---
 
