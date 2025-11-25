@@ -18,7 +18,7 @@ Pipeline de données temps réel et batch autour de la météo:
 - Spark job → Hive (Spark + HiveServer2)
 - Prometheus + Grafana + exporters (Kafka, Node, PostgreSQL)
 
-![Texte alternatif](image/Archi.jpg)
+![Texte alternatif](image/Archi.png)
 
 
 Flux de données:
