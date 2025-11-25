@@ -1,4 +1,4 @@
-## Projet Orchestration Data Météo (Kafka → PostgreSQL → HDFS → Spark/MapReduce → Hive)
+## Projet Orchestration Data Météo 
 
 ### Présentation
 Pipeline de données temps réel et batch autour de la météo:
@@ -15,10 +15,10 @@ Pipeline de données temps réel et batch autour de la météo:
 - Consumer Python (Kafka → PostgreSQL)
 - Hadoop (NameNode + DataNode) exposant WebHDFS
 - Export PostgreSQL → HDFS (Python, `pull_Hdfs.py`)
-- Spark job / MapReduce Python HDFS → Hive (Spark + HiveServer2)
+- Spark job → Hive (Spark + HiveServer2)
 - Prometheus + Grafana + exporters (Kafka, Node, PostgreSQL)
 
-![Texte alternatif](image/NotreArchitecture.jpg)
+![Texte alternatif](image/Archi.jpg)
 
 
 Flux de données:
@@ -69,6 +69,21 @@ Le réseau Docker externe `infra-kafka` est assuré par Ansible.
 
 ## Détails techniques
 
+### Fréquences d’exécution (batch 10 minutes)
+- **Export API Weather → Kafka → PostgreSQL**:
+  - le producer interroge l’API OpenWeather et envoie les messages dans Kafka toutes les **10 minutes**.
+- **Export PostgreSQL → HDFS (`pull-hdfs`)**:
+  - le job `pull_Hdfs.py` lit périodiquement PostgreSQL et pousse les nouveaux enregistrements dans HDFS toutes les **10 minutes**.
+- **Nettoyage + insertion vers Hive (`spark-job`)**:
+  - le conteneur `spark-job` lit les nouveaux fichiers HDFS et alimente la table Hive `weather.events` toutes les **10 minutes**.
+
+### Modèle de données PostgreSQL
+- **Table `weather`**:
+  - stocke les messages bruts reçus de Kafka sous forme de JSON (`value` en `JSONB`) avec le timestamp, l’offset et la partition.
+- **Table `REF_DATE`**:
+  - conserve, par application, le dernier timestamp d’export traité (watermark),
+  - utilisée par `pull-hdfs` et `spark-job` pour ne traiter **que les nouvelles données** à chaque exécution (toutes les 10 minutes) et éviter les doublons vers HDFS ou Hive.
+
 ### Producer (`producer/main.py`)
 - Récupère périodiquement:
   - météo courante, prévisions 5j, qualité de l’air, précipitations, infos soleil
@@ -85,23 +100,39 @@ Le réseau Docker externe `infra-kafka` est assuré par Ansible.
 - Écrit des fichiers `weather_*.json` en JSON Lines sous `HDFS_BASE_PATH/dt=YYYY-MM-DD`
 - Utilise WebHDFS via `InsecureClient`
 
-### Ingestion HDFS → Hive (`ansible/roles/hadoop/files/MapReduce/Map_Reduce.py`)
-- Parcourt récursivement les partitions `dt=*` sous `HDFS_BASE_PATH` et lit les fichiers `.json` (JSON Lines).
-- Attend HiveServer2, crée la table si absente (schéma ci-dessous), puis insère une ligne par enregistrement.
+### Ingestion HDFS → Hive (Spark + HiveServer2)
+- Le conteneur `spark-job` exécute en continu le script `ansible/roles/hadoop/files/spark_transform/json_to_hive_daemon.py`.
+- Le job :
+  - parcourt récursivement les partitions `dt=*` sous `HDFS_BASE_PATH` (`/user/hdfs/weather/dt=YYYY-MM-DD`),
+  - lit les fichiers `.json` en JSON Lines produits par l’export PostgreSQL,
+  - « aplatit » la structure JSON OpenWeather pour en extraire les champs utiles (ville, coordonnées, timestamps, température, humidité, vent, description météo, etc.),
+  - écrit les données nettoyées dans une table Hive **`weather.events`** au format **Parquet** sous `hdfs://namenode:8020/user/hive/warehouse/weather.db/events`.
+- Colonnes principales de `weather.events` (simplifié) :
+  - `city_id`, `city_name`, `lat`, `lon`
+  - `obs_ts_utc`, `sunrise_utc`, `sunset_utc`
+  - `temp`, `feels_like`, `temp_min`, `temp_max`, `pressure`, `humidity`
+  - `wind_speed`, `wind_deg`
+  - `weather_code`, `weather_main`, `weather_description`, `weather_icon`
+  - `timezone_offset_seconds`, `raw_payload` (JSON complet en backup)
+- Accès Hive:
+  - via HiveServer2 (`hive-server`, port 10000) avec Beeline, DBeaver, PyHive, Spark SQL, etc.
+  - exemple de requête d’agrégation:
 
 ```sql
-CREATE TABLE IF NOT EXISTS weather_data (
-  event_time STRING,
-  kafka_partition INT,
-  kafka_offset INT,
-  value STRING,
-  ingestion_time TIMESTAMP
-) STORED AS PARQUET;
+SELECT
+  date_trunc('hour', obs_ts_utc) AS heure,
+  avg(temp) AS temperature_moyenne
+FROM weather.events
+GROUP BY date_trunc('hour', obs_ts_utc)
+ORDER BY heure DESC
+LIMIT 24;
 ```
 
 ### Monitoring
 - Prometheus scrape:
   - `postgres-exporter:9187`
+  - `kafka-exporter:9308`
+  - `node-exporter:9100`
   - `kafka:9092` (note: pour des métriques Kafka plus riches, prévoir un exporter dédié)
 - Grafana: admin/admin par défaut
 
@@ -119,7 +150,7 @@ CREATE TABLE IF NOT EXISTS weather_data (
 ---
 
 ## Lancement rapide (résumé)
-1) Créez un `.env` complet (voir exemple plus haut).
+1) Renseignez les variables nécessaires dans `ansible/roles/*/vars/main.yml` (ou laissez votre CI/GitHub Action les injecter via les secrets) : les rôles généreront automatiquement leurs `.env` à partir des templates `.env.j2`.
 2) Exécutez:
 ```bash
 ansible-playbook -i ansible/inventory.ini ansible/site.yml
@@ -128,17 +159,18 @@ ansible-playbook -i ansible/inventory.ini ansible/site.yml
 
 ---
 
-## Dépannage (FAQ)
-- Kafka non prêt / consumer en attente:
-  - Vérifier la santé du conteneur Kafka, la variable `BOOTSTRAP_SERVERS` et le réseau `infra-kafka`.
-- Aucune donnée dans PostgreSQL:
-  - Vérifier la clé `OPENWEATHER_API_KEY` et l’accès Internet; contrôler les logs du producer.
-- Export HDFS échoue:
-  - Vérifier `HDFS_URL` et l’UI du NameNode; attendre que WebHDFS soit up (le code attend automatiquement).
-- Ingestion HDFS → Hive n'insère rien:
-  - Vérifier la présence de dossiers `dt=YYYY-MM-DD` et de fichiers `.json` valides sous `HDFS_BASE_PATH`.
-  - Vérifier `HIVE_HOST`/`HIVE_PORT` et l’accessibilité TCP à HiveServer2.
-  - Consulter les logs du conteneur pour les erreurs PyHive/Thrift et de parsing JSON.
+## Troubleshooting (FAQ)
+
+- Erreur de format de script dans le conteneur Spark (`spark-job`):
+  - Symptôme: l’entrée `entrypoint.sh` n’est pas exécutée correctement (erreur de format / `^M` dans le script).
+  - Cause probable: fichier avec fins de lignes Windows (CRLF) au lieu de Unix (LF).
+  - Solution (dans le conteneur `spark-job`):
+    1. Installer `dos2unix`:
+    2. Convertir les scripts en format Unix:
+       ```bash
+       dos2unix /ansible/roles/hadoop/files/spark_transform/entrypoint.sh
+       dos2unix /opt/hadoop/jobs/entrypoint.sh
+       ```
 
 
 ---
